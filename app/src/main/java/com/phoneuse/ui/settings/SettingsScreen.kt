@@ -197,7 +197,7 @@ fun SettingsScreen(
     val quiet by settings.quietHours.collectAsState(QuietHours())
     val fontSize by settings.fontSize.collectAsState(FontSize.DEFAULT)
     val unfolded by settings.unfoldedLayout.collectAsState(UnfoldedLayout.SIDE_BY_SIDE)
-    val voice by settings.voiceLanguage.collectAsState(VoiceLanguage.KOREAN)
+    val voice by settings.voiceLanguage.collectAsState(VoiceLanguage.SYSTEM)
     val readAloud by settings.readAloud.collectAsState(false)
     val screenContent by settings.screenContent.collectAsState(ScreenContent.ALL)
 

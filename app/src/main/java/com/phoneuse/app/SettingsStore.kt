@@ -15,6 +15,7 @@ import com.phoneuse.security.KeystoreSecretBox
 import com.phoneuse.security.SecretBox
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -180,7 +181,9 @@ class SettingsStore internal constructor(
 
     val fontSize: Flow<FontSize> = store.data.map { prefs -> enumOf(prefs[FONT_SIZE], FontSize.DEFAULT) }
     val unfoldedLayout: Flow<UnfoldedLayout> = store.data.map { prefs -> enumOf(prefs[UNFOLDED], UnfoldedLayout.SIDE_BY_SIDE) }
-    val voiceLanguage: Flow<VoiceLanguage> = store.data.map { prefs -> enumOf(prefs[VOICE_LANG], VoiceLanguage.KOREAN) }
+    val voiceLanguage: Flow<VoiceLanguage> = store.data
+        .map { prefs -> enumOf(prefs[VOICE_LANG], VoiceLanguage.SYSTEM) }
+        .catch { emit(VoiceLanguage.SYSTEM) }
 
     /** Settings "답 소리 내어 읽기": replies are read aloud when a run ends; off by default. */
     val readAloud: Flow<Boolean> = store.data.map { it[READ_ALOUD] ?: false }

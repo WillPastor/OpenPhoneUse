@@ -50,6 +50,7 @@ import com.phoneuse.app.AppGraph
 import com.phoneuse.app.ReadAloud
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -89,6 +90,8 @@ import com.phoneuse.ui.theme.MonoStyle
 import com.phoneuse.ui.theme.PuButton
 import com.phoneuse.ui.theme.PuIcons
 import com.phoneuse.ui.theme.pu
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 /**
  * The conversation, newest at the bottom. Uses a reversed layout so the newest content stays anchored
@@ -168,6 +171,7 @@ private fun Modifier.copyOnLongPress(text: String): Modifier {
 private fun AnswerText(text: String) {
     val c = pu
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val haptics = LocalHapticFeedback.current
     var menu by remember { mutableStateOf(false) }
     val speaking by ReadAloud.speaking.collectAsState()
@@ -194,7 +198,9 @@ private fun AnswerText(text: String) {
             })
             DropdownMenuItem(text = { Text(if (speaking) tr("Stop reading", "읽기 멈추기") else tr("Read aloud", "소리 내어 읽기"), color = c.text) }, onClick = {
                 menu = false
-                if (speaking) ReadAloud.stop() else ReadAloud.speak(context, text, AppGraph.voiceLanguage.value.tag)
+                if (speaking) ReadAloud.stop() else scope.launch {
+                    ReadAloud.speak(context, text, AppGraph.settings.voiceLanguage.first().tag)
+                }
             })
         }
     }

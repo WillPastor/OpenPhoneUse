@@ -16,13 +16,15 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.content.ContextCompat
 import com.phoneuse.app.AppGraph
-import com.phoneuse.app.VoiceLanguage
 import com.phoneuse.i18n.tr
 import com.phoneuse.voice.VoiceEngine
 import com.phoneuse.voice.VoiceError
@@ -30,7 +32,10 @@ import com.phoneuse.voice.VoicePhase
 import com.phoneuse.voice.VoiceRecognizer
 import com.phoneuse.voice.VoiceState
 import com.phoneuse.voice.speechLanguageTag
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 /** How long an inline voice error stays before the input comes back. */
@@ -45,12 +50,14 @@ class VoiceInput internal constructor(
     private val recognizer: VoiceRecognizer,
     stateHolder: State<VoiceState>,
     private val begin: () -> Unit,
+    private val cancelPendingStart: () -> Boolean,
     private val ended: () -> Unit,
 ) {
     val state: VoiceState by stateHolder
 
     /** The mic: starts listening, or finishes when already listening (tap the mic again to stop). */
     fun toggle() {
+        if (cancelPendingStart()) return
         when (state.phase) {
             VoicePhase.IDLE, VoicePhase.ERROR -> begin()
             VoicePhase.STARTING, VoicePhase.LISTENING -> recognizer.stop()
@@ -59,11 +66,14 @@ class VoiceInput internal constructor(
     }
 
     /** Done: keep what was said. */
-    fun done() = recognizer.stop()
+    fun done() {
+        cancelPendingStart()
+        recognizer.stop()
+    }
 
     /** Cancel (X): drop what was heard and go back to the input. */
     fun cancel() {
-        val wasActive = state.active
+        val wasActive = cancelPendingStart() || state.active
         recognizer.cancel()
         if (wasActive) ended()
     }
@@ -93,16 +103,27 @@ fun rememberVoiceInput(onText: (String) -> Unit, onEnd: () -> Unit = {}): VoiceI
         }
         if (text != null) latestText(text) else latestEnd()
     }
-    val language = { speechLanguageTag(languageSetting(), Locale.getDefault()) }
-    val listen = {
-        if (recognizer.engine == VoiceEngine.Dialog) {
-            try {
-                dialog.launch(dialogIntent(language()))
-            } catch (e: ActivityNotFoundException) {
-                recognizer.fail(VoiceError.UNAVAILABLE)
+    val scope = rememberCoroutineScope()
+    var pendingStart by remember { mutableStateOf<Job?>(null) }
+    val cancelPendingStart = {
+        val job = pendingStart
+        val pending = job?.isActive == true
+        job?.cancel()
+        pending
+    }
+    val listen: () -> Unit = {
+        pendingStart?.cancel()
+        pendingStart = scope.launch {
+            val language = speechLanguageTag(AppGraph.settings.voiceLanguage.first(), Locale.getDefault())
+            if (recognizer.engine == VoiceEngine.Dialog) {
+                try {
+                    dialog.launch(dialogIntent(language))
+                } catch (e: ActivityNotFoundException) {
+                    recognizer.fail(VoiceError.UNAVAILABLE)
+                }
+            } else {
+                recognizer.start(language)
             }
-        } else {
-            recognizer.start(language())
         }
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -129,11 +150,8 @@ fun rememberVoiceInput(onText: (String) -> Unit, onEnd: () -> Unit = {}): VoiceI
             latestEnd()
         }
     }
-    return remember(recognizer) { VoiceInput(recognizer, state, begin, { latestEnd() }) }
+    return remember(recognizer) { VoiceInput(recognizer, state, begin, cancelPendingStart) { latestEnd() } }
 }
-
-/** Settings "음성으로 말하기"; Korean until the settings have loaded. */
-private fun languageSetting(): VoiceLanguage = runCatching { AppGraph.voiceLanguage.value }.getOrDefault(VoiceLanguage.KOREAN)
 
 private fun dialogIntent(language: String): Intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
     .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)

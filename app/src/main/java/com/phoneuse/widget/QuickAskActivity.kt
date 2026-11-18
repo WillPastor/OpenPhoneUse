@@ -39,6 +39,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -101,23 +102,32 @@ class QuickAskActivity : ComponentActivity() {
         }
         mode = requested!!
         conversation = target
-        if (mode == QuickAskMode.VOICE && savedInstanceState == null) listen()
         setContent {
+            val language by AppGraph.settings.voiceLanguage.collectAsState(initial = null)
+            val selected = language ?: return@setContent
             val theme by AppGraph.themeMode.collectAsState()
             PhoneUseTheme(isDark(theme ?: ThemeMode.SYSTEM)) {
-                if (mode != QuickAskMode.VOICE) {
-                    Sheet(mode, onSubmit = ::submit, onChip = ::sendChip, onMic = ::listen, onDismiss = ::finish)
+                if (mode == QuickAskMode.VOICE) {
+                    var launched by rememberSaveable { mutableStateOf(false) }
+                    LaunchedEffect(Unit) {
+                        if (!launched) {
+                            launched = true
+                            listen(selected.tag)
+                        }
+                    }
+                } else {
+                    Sheet(mode, onSubmit = ::submit, onChip = ::sendChip, onMic = { listen(selected.tag) }, onDismiss = ::finish)
                 }
             }
         }
     }
 
-    private fun listen() {
+    private fun listen(language: String?) {
         val speech = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             .putExtra(RecognizerIntent.EXTRA_PROMPT, tr("Speak now", "말해 주세요"))
             .apply {
-                AppGraph.voiceLanguage.value.tag?.let {
+                language?.let {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, it)
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, it)
                 }

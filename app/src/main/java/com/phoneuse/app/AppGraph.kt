@@ -20,9 +20,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
@@ -93,8 +91,6 @@ object AppGraph {
             theme.compareAndSet(null, ThemeMode.SYSTEM)
             size.compareAndSet(null, FontSize.DEFAULT)
         }
-        voiceLanguage = settings.voiceLanguage.catch { emit(VoiceLanguage.KOREAN) }
-            .stateIn(scope, SharingStarted.Eagerly, VoiceLanguage.KOREAN)
         // Settings "조작 속도": every settle of the agent reads it.
         scope.launch {
             settings.controlSpeed.catch { emit(ControlSpeed.NORMAL) }.collect { SettleSpeed.scale = it.waitScale }
@@ -174,10 +170,6 @@ object AppGraph {
             }
         }
     }
-
-    /** Settings "음성으로 말하기", read at once by the voice input buttons. */
-    lateinit var voiceLanguage: StateFlow<VoiceLanguage>
-        private set
 
     private const val THEME_WAIT_MS = 1_500L
     private const val DAY_MS = 24 * 60 * 60 * 1000L
