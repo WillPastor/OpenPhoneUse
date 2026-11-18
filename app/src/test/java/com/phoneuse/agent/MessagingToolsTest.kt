@@ -1,6 +1,7 @@
 package com.phoneuse.agent
 
 import com.phoneuse.cards.PermissionCard
+import com.phoneuse.i18n.Lang
 import com.phoneuse.memory.Confidence
 import com.phoneuse.memory.InMemoryMemoryStore
 import com.phoneuse.model.InputItem
@@ -378,6 +379,26 @@ class MessagingToolsTest {
 
         val none = run("dismiss_notifications", """{"keys":["nope"]}""")
         assertTrue(none.output, none.output.startsWith("ERROR"))
+    }
+
+    @Test fun dismissLocalizesTheCountBeyondFiveNotifications() = runBlocking {
+        val seven = (1..7).map { rows.first().copy(key = "n$it", appLabel = "App $it") }.toMutableList()
+        val tool = NotificationTool(Notifications(rows = seven)) { now }
+        val savedLanguage = Lang.korean
+        try {
+            for ((korean, suffix) in listOf(false to " (and 2 more)", true to " (외 2개)")) {
+                Lang.korean = korean
+                var summary = ""
+                tool.dismiss(seven.map { it.key }) {
+                    summary = it
+                    false
+                }
+                assertTrue(summary, summary.endsWith(suffix))
+                assertFalse(summary, "App 6" in summary)
+            }
+        } finally {
+            Lang.korean = savedLanguage
+        }
     }
 
     @Test fun dismissTheUserAskedForSkipsTheCardForAFew() {

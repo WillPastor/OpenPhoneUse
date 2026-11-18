@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import com.phoneuse.cards.CardAction
 import com.phoneuse.cards.CardActions
 import com.phoneuse.cards.ParcelCard
+import com.phoneuse.today.TodaySummary
 import com.phoneuse.ui.theme.MonoStyle
 import com.phoneuse.ui.theme.pu
 
@@ -32,7 +33,8 @@ import com.phoneuse.ui.theme.pu
 fun ParcelCardView(card: ParcelCard, onAction: (CardAction) -> Unit, modifier: Modifier = Modifier) {
     val c = pu
     val current = ParcelCard.STAGES.indexOf(card.status).coerceAtLeast(0)
-    CardBox(modifier, label = tr("Delivery status: ${card.title}, ${card.status}", "배송 상태: ${card.title}, ${card.status}")) {
+    val statusLabel = TodaySummary.stageLabel(card.status)
+    CardBox(modifier, label = tr("Delivery status: ${card.title}, $statusLabel", "배송 상태: ${card.title}, $statusLabel")) {
         Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.Bottom) {
             Text(card.title, Modifier.weight(1f), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = c.text, maxLines = 1)
             val sub = card.source?.takeIf { it.isNotBlank() } ?: listOfNotNull(card.carrier, card.tracking).joinToString(" ").takeIf { it.isNotBlank() }
@@ -51,7 +53,7 @@ fun ParcelCardView(card: ParcelCard, onAction: (CardAction) -> Unit, modifier: M
         Row(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
             ParcelCard.STAGES.forEachIndexed { i, stage ->
                 Text(
-                    stage,
+                    TodaySummary.stageLabel(stage),
                     Modifier.weight(1f),
                     fontSize = 11.5.sp,
                     fontWeight = if (i == current) FontWeight.Bold else FontWeight.Normal,

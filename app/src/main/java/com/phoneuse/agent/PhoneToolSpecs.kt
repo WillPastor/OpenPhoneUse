@@ -43,7 +43,7 @@ internal object PhoneToolSpecs {
                 required = listOf("time", "text"),
                 props = mapOf(
                     "time" to prop("string", "HH:mm (next occurrence) or ISO 8601 local date-time, e.g. 2026-11-02T08:30."),
-                    "text" to prop("string", "What the notification says, in Korean."),
+                    "text" to prop("string", "Use the user's exact reminder text if supplied. Otherwise write it in the app language."),
                 ),
             ),
         ),

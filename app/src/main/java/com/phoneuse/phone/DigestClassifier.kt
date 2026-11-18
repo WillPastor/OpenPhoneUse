@@ -1,11 +1,19 @@
 package com.phoneuse.phone
 
-/** The groups of the board "Digest", in its order; [tone] is the digest card's group tone. */
-enum class DigestBucket(val label: String, val tone: String) {
-    REPLY("답장 필요", "urgent"),
-    MONEY("돈 나간 것", "money"),
-    ARRIVAL("오늘 도착", "info"),
-    OTHER("나머지", "muted"),
+import com.phoneuse.i18n.tr
+
+/** Digest groups in board order. [label] identifies the group in tool output and saved cards. */
+enum class DigestBucket(val label: String, private val english: String, val tone: String) {
+    REPLY("답장 필요", "Needs a reply", "urgent"),
+    MONEY("돈 나간 것", "Payments", "money"),
+    ARRIVAL("오늘 도착", "Arriving today", "info"),
+    OTHER("나머지", "Other", "muted");
+
+    val displayLabel: String get() = tr(english, label)
+
+    companion object {
+        fun displayLabelFor(label: String): String = entries.firstOrNull { it.label == label }?.displayLabel ?: label
+    }
 }
 
 /**

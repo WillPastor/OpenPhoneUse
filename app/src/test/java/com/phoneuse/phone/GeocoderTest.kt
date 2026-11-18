@@ -1,5 +1,6 @@
 package com.phoneuse.phone
 
+import com.phoneuse.i18n.Lang
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -75,6 +76,29 @@ class GeocoderTest {
         val plain = g.search("강남", null, null)
         assertNull(server.takeRequest(1, TimeUnit.SECONDS)!!.requestUrl!!.queryParameter("viewbox"))
         assertNull(plain[0].distanceM)
+    }
+
+    @Test
+    fun cachedLookupsRespectLanguageChanges() = runBlocking {
+        val g = geocoder()
+        val original = Lang.korean
+        try {
+            for ((language, name) in listOf("ko" to "서울", "en" to "Seoul")) {
+                Lang.korean = language == "ko"
+                server.enqueue(MockResponse().setBody("""[{"name":"$name","lat":"37.5","lon":"127.0"}]"""))
+                server.enqueue(MockResponse().setBody("""{"display_name":"$name"}"""))
+                server.enqueue(MockResponse().setBody("""[{"boundingbox":["37","38","126","128"]}]"""))
+                assertEquals(name, g.search("Seoul", null, null).single().name)
+                assertEquals(name, g.reverse(37.5, 127.0))
+                assertEquals(BBox(37.0, 38.0, 126.0, 128.0), g.bounds("Seoul"))
+                repeat(3) {
+                    val url = server.takeRequest(1, TimeUnit.SECONDS)!!.requestUrl!!
+                    assertEquals(language, url.queryParameter("accept-language"))
+                }
+            }
+        } finally {
+            Lang.korean = original
+        }
     }
 
     @Test

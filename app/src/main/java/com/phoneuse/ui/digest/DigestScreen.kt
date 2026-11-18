@@ -59,6 +59,7 @@ import com.phoneuse.phone.NotificationTool
 import com.phoneuse.phone.PhoneUseNotificationListener
 import com.phoneuse.phone.SmsParsers
 import com.phoneuse.phone.StoredNotification
+import com.phoneuse.today.TodaySummary
 import com.phoneuse.ui.chat.DeleteDialog
 import com.phoneuse.ui.settings.PermissionKey
 import com.phoneuse.ui.settings.Permissions
@@ -83,9 +84,9 @@ object DigestText {
         if (reply > 0) tr("Grouped $total notifications. The $reply above need a look.", "알림 ${total}개를 묶었어요. 꼭 볼 건 위의 ${reply}개예요.") else tr("Grouped $total notifications.", "알림 ${total}개를 묶었어요.")
 
     fun replyPrompt(index: Int, at: String) =
-        tr("Write a draft reply to notification ${index + 1} ($at) under '${DigestBucket.REPLY.label}' in the notification summary", "알림 요약의 '${DigestBucket.REPLY.label}' ${index + 1}번 알림($at)에 보낼 답장 초안 써줘")
+        tr("Write a draft reply to notification ${index + 1} ($at) under '${DigestBucket.REPLY.displayLabel}' in the notification summary", "알림 요약의 '${DigestBucket.REPLY.displayLabel}' ${index + 1}번 알림($at)에 보낼 답장 초안 써줘")
 
-    fun trackPrompt(index: Int) = tr("Where is parcel ${index + 1} under '${DigestBucket.ARRIVAL.label}' in the notification summary?", "알림 요약의 '${DigestBucket.ARRIVAL.label}' ${index + 1}번 택배 어디쯤 왔는지 알려줘")
+    fun trackPrompt(index: Int) = tr("Where is parcel ${index + 1} under '${DigestBucket.ARRIVAL.displayLabel}' in the notification summary?", "알림 요약의 '${DigestBucket.ARRIVAL.displayLabel}' ${index + 1}번 택배 어디쯤 왔는지 알려줘")
 
     /** The sum of the payments the parsers read; null when none could be read. */
     fun moneyTotal(items: List<StoredNotification>): Long? =
@@ -102,7 +103,7 @@ object DigestText {
 
     /** A parcel line: "CJ대한통운 배송 출발", else the notification's own title. */
     fun parcelLine(n: StoredNotification): String =
-        SmsParsers.parcel(n.text)?.let { "${it.carrier} ${it.status}" } ?: n.title.ifBlank { n.appLabel }
+        SmsParsers.parcel(n.text)?.let { "${it.carrier} ${TodaySummary.stageLabel(it.status)}" } ?: n.title.ifBlank { n.appLabel }
 }
 
 /**
@@ -165,7 +166,7 @@ fun DigestScreen(onBack: () -> Unit, onPrompt: (String) -> Boolean, resumeTick: 
                     Lead(DigestText.lead(groups.values.sumOf { it.size }, groups[DigestBucket.REPLY]?.size ?: 0))
                     if (!access) AccessCard { Permissions.open(context, PermissionKey.NOTIFICATION_ACCESS) }
                     groups[DigestBucket.REPLY]?.let { reply ->
-                        Group(DigestBucket.REPLY.label, reply.size, labelColor = c.accentText) {
+                        Group(DigestBucket.REPLY.displayLabel, reply.size, labelColor = c.accentText) {
                             reply.take(NotificationTool.MAX_PER_GROUP).forEachIndexed { i, n ->
                                 val at = NotificationTool.clockText(n.postedAt, now)
                                 ItemRow(n.title.ifBlank { n.appLabel }, at, n.text, tr("Write reply", "답장 쓰기")) { prompt(DigestText.replyPrompt(i, at)) }
@@ -174,7 +175,7 @@ fun DigestScreen(onBack: () -> Unit, onPrompt: (String) -> Boolean, resumeTick: 
                     }
                     groups[DigestBucket.MONEY]?.let { money -> MoneyGroup(money) }
                     groups[DigestBucket.ARRIVAL]?.let { arrival ->
-                        Group(DigestBucket.ARRIVAL.label, arrival.size) {
+                        Group(DigestBucket.ARRIVAL.displayLabel, arrival.size) {
                             arrival.take(NotificationTool.MAX_PER_GROUP).forEachIndexed { i, n ->
                                 ItemRow(null, NotificationTool.clockText(n.postedAt, now), DigestText.parcelLine(n), tr("Track", "추적"), strong = true) {
                                     prompt(DigestText.trackPrompt(i))
@@ -294,7 +295,7 @@ private fun MoneyGroup(items: List<StoredNotification>) {
     val c = pu
     val total = DigestText.moneyTotal(items)
     Group(
-        DigestBucket.MONEY.label,
+        DigestBucket.MONEY.displayLabel,
         items.size,
         trailing = total?.let { t -> { Text(DigestText.won(t), style = MonoStyle, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.text) } },
     ) {
@@ -337,12 +338,12 @@ private fun RestGroup(items: List<StoredNotification>, onClear: () -> Unit) {
                     style = Stroke(w, pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx()))),
                 )
             }
-            .semantics { contentDescription = DigestBucket.OTHER.label }
+            .semantics { contentDescription = DigestBucket.OTHER.displayLabel }
             .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text("${DigestBucket.OTHER.label} · ${items.size}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = c.textSub)
+            Text("${DigestBucket.OTHER.displayLabel} · ${items.size}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = c.textSub)
             Text(DigestText.restLine(items), fontSize = 12.5.sp, color = c.textSub, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         PuButton(tr("Clear all", "모두 지우기"), onClear, kind = ButtonKind.OUTLINE, height = 34.dp, radius = 10.dp, fontSize = 13)

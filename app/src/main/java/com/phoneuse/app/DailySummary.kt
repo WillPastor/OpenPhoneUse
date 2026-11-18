@@ -45,7 +45,7 @@ object DailySummary {
 
     /** The notification text: each non-empty group with its count, "나머지" last; null when there is nothing. */
     fun text(groups: Map<DigestBucket, List<*>>): String? =
-        DigestBucket.entries.mapNotNull { b -> groups[b]?.size?.takeIf { it > 0 }?.let { "${b.label} $it" } }
+        DigestBucket.entries.mapNotNull { b -> groups[b]?.size?.takeIf { it > 0 }?.let { "${b.displayLabel} $it" } }
             .takeIf { it.isNotEmpty() }?.joinToString(" · ")
 
     /** Sets (or with a negative [minute] cancels) the daily alarm. */

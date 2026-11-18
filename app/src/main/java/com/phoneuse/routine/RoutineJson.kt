@@ -1,5 +1,6 @@
 package com.phoneuse.routine
 
+import com.phoneuse.i18n.tr
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -48,29 +49,32 @@ object RoutineJson {
     private const val MAX_STEPS = 10
     private const val MAX_EVENT_MINUTES = 24 * 60
 
-    private class Bad(message: String) : Exception(message)
+    private class Bad(en: String, ko: String) : Exception(tr(en, ko))
 
     fun parse(text: String, fromModel: Boolean): RoutineParse {
         val obj = try {
             Json.parseToJsonElement(text) as? JsonObject
         } catch (e: Exception) {
             null
-        } ?: return RoutineParse.Error("JSON 객체가 아니에요")
+        } ?: return RoutineParse.Error(tr("Expected a JSON object", "JSON 객체가 아니에요"))
         return parse(obj, fromModel)
     }
 
     fun parse(obj: JsonObject, fromModel: Boolean): RoutineParse = try {
         RoutineParse.Ok(read(obj, fromModel))
     } catch (e: Bad) {
-        RoutineParse.Error(e.message ?: "형식이 맞지 않아요")
+        RoutineParse.Error(e.message ?: tr("Invalid routine format", "형식이 맞지 않아요"))
     }
 
     private fun read(o: JsonObject, fromModel: Boolean): Routine {
-        val title = o.str("title")?.trim()?.takeIf { it.isNotEmpty() } ?: throw Bad("title이 비었어요")
-        if (title.length > Routine.MAX_TITLE) throw Bad("title은 ${Routine.MAX_TITLE}자 이하여야 해요")
-        val trigger = trigger(o.obj("trigger") ?: throw Bad("trigger가 없어요"))
+        val title = o.str("title")?.trim()?.takeIf { it.isNotEmpty() } ?: throw Bad("Enter a title for the routine", "title이 비었어요")
+        if (title.length > Routine.MAX_TITLE) throw Bad(
+            "Keep the routine title to ${Routine.MAX_TITLE} characters or fewer",
+            "title은 ${Routine.MAX_TITLE}자 이하여야 해요",
+        )
+        val trigger = trigger(o.obj("trigger") ?: throw Bad("Choose a trigger for the routine", "trigger가 없어요"))
         val conditions = o.obj("conditions")?.let { conditions(it) } ?: Conditions()
-        val action = action(o.obj("action") ?: throw Bad("action이 없어요"))
+        val action = action(o.obj("action") ?: throw Bad("Choose an action for the routine", "action이 없어요"))
         val base = Routine(title = title, trigger = trigger, conditions = conditions, action = action, sentence = o.str("sentence")?.take(MAX_TEXT))
         if (fromModel) return base
         return base.copy(
@@ -92,48 +96,81 @@ object RoutineJson {
         "time" -> {
             // "at": "07:30" is accepted as well as hour/minute.
             val at = t.str("at")?.let { clock(it, "trigger.at") }
-            val hour = t.int("hour") ?: at?.hour ?: throw Bad("trigger.hour가 없어요")
+            val hour = t.int("hour") ?: at?.hour ?: throw Bad("Enter an hour for the time trigger", "trigger.hour가 없어요")
             val minute = t.int("minute") ?: at?.minute ?: 0
-            if (hour !in 0..23) throw Bad("trigger.hour는 0–23이어야 해요 ($hour)")
-            if (minute !in 0..59) throw Bad("trigger.minute는 0–59여야 해요 ($minute)")
+            if (hour !in 0..23) throw Bad("The trigger hour must be between 0 and 23 ($hour)", "trigger.hour는 0–23이어야 해요 ($hour)")
+            if (minute !in 0..59) throw Bad("The trigger minute must be between 0 and 59 ($minute)", "trigger.minute는 0–59여야 해요 ($minute)")
             Trigger.Time(hour, minute, days(t["days"], "trigger.days") ?: emptySet())
         }
         "place" -> {
-            val name = t.str("name")?.trim()?.takeIf { it.isNotEmpty() } ?: throw Bad("trigger.name이 비었어요")
-            val lat = t.num("lat") ?: throw Bad("trigger.lat/lng가 없어요 (장소 좌표)")
-            val lng = t.num("lng") ?: throw Bad("trigger.lat/lng가 없어요 (장소 좌표)")
-            if (!(lat in -90.0..90.0) || !(lng in -180.0..180.0)) throw Bad("trigger 좌표가 범위를 벗어났어요 ($lat, $lng)")
+            val name = t.str("name")?.trim()?.takeIf { it.isNotEmpty() } ?: throw Bad("Enter a name for the place", "trigger.name이 비었어요")
+            val lat = t.num("lat") ?: throw Bad("Pick a place with a latitude and longitude", "trigger.lat/lng가 없어요 (장소 좌표)")
+            val lng = t.num("lng") ?: throw Bad("Pick a place with a latitude and longitude", "trigger.lat/lng가 없어요 (장소 좌표)")
+            if (!(lat in -90.0..90.0) || !(lng in -180.0..180.0)) throw Bad(
+                "The place coordinates are out of range ($lat, $lng)",
+                "trigger 좌표가 범위를 벗어났어요 ($lat, $lng)",
+            )
             val radius = t.int("radius_m") ?: Routine.DEFAULT_RADIUS_M
-            if (radius < Routine.MIN_RADIUS_M) throw Bad("trigger.radius_m은 ${Routine.MIN_RADIUS_M}m 이상이어야 해요 ($radius)")
-            if (radius > Routine.MAX_RADIUS_M) throw Bad("trigger.radius_m은 ${Routine.MAX_RADIUS_M}m 이하여야 해요 ($radius)")
-            val edge = t.str("on")?.let { PlaceEdge.fromWire(it) ?: throw Bad("trigger.on은 enter|exit여야 해요 ($it)") } ?: PlaceEdge.ENTER
+            if (radius < Routine.MIN_RADIUS_M) throw Bad(
+                "The place radius must be at least ${Routine.MIN_RADIUS_M} m ($radius)",
+                "trigger.radius_m은 ${Routine.MIN_RADIUS_M}m 이상이어야 해요 ($radius)",
+            )
+            if (radius > Routine.MAX_RADIUS_M) throw Bad(
+                "The place radius must be at most ${Routine.MAX_RADIUS_M} m ($radius)",
+                "trigger.radius_m은 ${Routine.MAX_RADIUS_M}m 이하여야 해요 ($radius)",
+            )
+            val edge = t.str("on")?.let {
+                PlaceEdge.fromWire(it) ?: throw Bad("Use enter or exit for trigger.on ($it)", "trigger.on은 enter|exit여야 해요 ($it)")
+            } ?: PlaceEdge.ENTER
             Trigger.Place(name.take(MAX_TEXT), lat, lng, radius, edge)
         }
         "notification" -> {
             val pkg = t.str("package")?.trim()?.takeIf { it.isNotEmpty() }
             val keyword = t.str("keyword")?.trim()?.takeIf { it.isNotEmpty() }
-            if (pkg == null && keyword == null) throw Bad("알림 트리거에는 package나 keyword가 있어야 해요")
-            if (pkg != null && !PACKAGE.matches(pkg)) throw Bad("trigger.package가 앱 패키지 이름이 아니에요 ($pkg)")
+            if (pkg == null && keyword == null) throw Bad(
+                "Choose an app or enter a keyword for the notification trigger",
+                "알림 트리거에는 package나 keyword가 있어야 해요",
+            )
+            if (pkg != null && !PACKAGE.matches(pkg)) throw Bad(
+                "Enter a valid app package name for the notification trigger ($pkg)",
+                "trigger.package가 앱 패키지 이름이 아니에요 ($pkg)",
+            )
             Trigger.Notification(pkg, keyword?.take(MAX_TEXT))
         }
         "device" -> {
-            val kind = DeviceKind.fromWire(t.str("kind")) ?: throw Bad("trigger.kind는 charger|bluetooth|headset|wifi 중 하나여야 해요 (${t.str("kind")})")
+            val wire = t.str("kind")
+            val kind = DeviceKind.fromWire(wire) ?: throw Bad(
+                "Use charger, bluetooth, headset or wifi for trigger.kind ($wire)",
+                "trigger.kind는 charger|bluetooth|headset|wifi 중 하나여야 해요 ($wire)",
+            )
             Trigger.Device(kind, t.str("detail")?.trim()?.takeIf { it.isNotEmpty() }?.take(MAX_TEXT))
         }
         "before_event" -> {
-            val minutes = t.int("minutes") ?: throw Bad("trigger.minutes가 없어요")
-            if (minutes !in 1..MAX_EVENT_MINUTES) throw Bad("trigger.minutes는 1–${MAX_EVENT_MINUTES}이어야 해요 ($minutes)")
+            val minutes = t.int("minutes") ?: throw Bad("Enter how many minutes before the event to run", "trigger.minutes가 없어요")
+            if (minutes !in 1..MAX_EVENT_MINUTES) throw Bad(
+                "Choose between 1 and $MAX_EVENT_MINUTES minutes before the event ($minutes)",
+                "trigger.minutes는 1–${MAX_EVENT_MINUTES}이어야 해요 ($minutes)",
+            )
             Trigger.BeforeEvent(minutes)
         }
-        else -> throw Bad("알 수 없는 trigger.type: $type (time|place|notification|device|before_event)")
+        else -> throw Bad(
+            "Unknown trigger type '$type' (time, place, notification, device or before_event)",
+            "알 수 없는 trigger.type: $type (time|place|notification|device|before_event)",
+        )
     }
 
     private fun conditions(c: JsonObject): Conditions {
         val cooldown = c.int("cooldown_min") ?: Conditions.DEFAULT_COOLDOWN_MIN
-        if (cooldown !in 0..Conditions.MAX_COOLDOWN_MIN) throw Bad("conditions.cooldown_min은 0–${Conditions.MAX_COOLDOWN_MIN}이어야 해요")
+        if (cooldown !in 0..Conditions.MAX_COOLDOWN_MIN) throw Bad(
+            "The cooldown must be between 0 and ${Conditions.MAX_COOLDOWN_MIN} minutes",
+            "conditions.cooldown_min은 0–${Conditions.MAX_COOLDOWN_MIN}이어야 해요",
+        )
         val from = c.str("time_from")?.let { clock(it, "conditions.time_from") }
         val to = c.str("time_to")?.let { clock(it, "conditions.time_to") }
-        if ((from == null) != (to == null)) throw Bad("conditions.time_from과 time_to는 함께 줘야 해요")
+        if ((from == null) != (to == null)) throw Bad(
+            "Enter both a start time and an end time for the time window",
+            "conditions.time_from과 time_to는 함께 줘야 해요",
+        )
         return Conditions(
             days = days(c["days"], "conditions.days")?.takeIf { it.isNotEmpty() },
             timeFrom = from,
@@ -145,36 +182,42 @@ object RoutineJson {
 
     private fun action(a: JsonObject): RoutineAction = when (val type = a.str("type")?.trim()?.lowercase()) {
         "ask" -> {
-            val prompt = a.str("prompt")?.trim()?.takeIf { it.isNotEmpty() } ?: throw Bad("action.prompt가 비었어요")
-            if (prompt.length > Routine.MAX_PROMPT) throw Bad("action.prompt는 ${Routine.MAX_PROMPT}자 이하여야 해요")
+            val prompt = a.str("prompt")?.trim()?.takeIf { it.isNotEmpty() } ?: throw Bad(
+                "Enter what you want the routine to do",
+                "action.prompt가 비었어요",
+            )
+            if (prompt.length > Routine.MAX_PROMPT) throw Bad(
+                "Keep the routine prompt to ${Routine.MAX_PROMPT} characters or fewer",
+                "action.prompt는 ${Routine.MAX_PROMPT}자 이하여야 해요",
+            )
             val steps = steps(a["steps"])
             // An omitted flag is "operates the phone" (the safe side: held while locked); only an explicit false opts out,
             // and a step that operates apps overrides it.
             RoutineAction.Ask(prompt, (a.bool("needs_device") ?: true) || steps.any { it.device }, steps)
         }
         "notify" -> RoutineAction.Notify(
-            a.str("text")?.trim()?.takeIf { it.isNotEmpty() }?.take(MAX_TEXT) ?: throw Bad("action.text가 비었어요"),
+            a.str("text")?.trim()?.takeIf { it.isNotEmpty() }?.take(MAX_TEXT) ?: throw Bad("Enter the notification text", "action.text가 비었어요"),
         )
         "open_app" -> {
-            val pkg = a.str("package")?.trim() ?: throw Bad("action.package가 없어요")
-            if (!PACKAGE.matches(pkg)) throw Bad("action.package가 앱 패키지 이름이 아니에요 ($pkg)")
+            val pkg = a.str("package")?.trim() ?: throw Bad("Choose an app to open", "action.package가 없어요")
+            if (!PACKAGE.matches(pkg)) throw Bad("Enter a valid app package name for the action ($pkg)", "action.package가 앱 패키지 이름이 아니에요 ($pkg)")
             RoutineAction.OpenApp(pkg, a.str("name")?.trim()?.takeIf { it.isNotEmpty() }?.take(MAX_TEXT))
         }
-        else -> throw Bad("알 수 없는 action.type: $type (ask|notify|open_app)")
+        else -> throw Bad("Unknown action type '$type' (ask, notify or open_app)", "알 수 없는 action.type: $type (ask|notify|open_app)")
     }
 
     private fun steps(e: JsonElement?): List<RoutineStep> {
         val array = when (e) {
             null, is JsonNull -> return emptyList()
             is JsonArray -> e
-            else -> throw Bad("action.steps는 배열이어야 해요")
+            else -> throw Bad("action.steps must be an array", "action.steps는 배열이어야 해요")
         }
-        if (array.size > MAX_STEPS) throw Bad("action.steps는 최대 ${MAX_STEPS}개예요")
+        if (array.size > MAX_STEPS) throw Bad("Use at most $MAX_STEPS action steps", "action.steps는 최대 ${MAX_STEPS}개예요")
         return array.mapNotNull { s ->
             when (s) {
                 is JsonPrimitive -> s.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }?.let { RoutineStep(it.take(MAX_TEXT)) }
                 is JsonObject -> s.str("text")?.trim()?.takeIf { it.isNotEmpty() }?.let { RoutineStep(it.take(MAX_TEXT), s.bool("device") ?: false) }
-                else -> throw Bad("action.steps 항목이 잘못됐어요")
+                else -> throw Bad("Each action step must be a string or an object", "action.steps 항목이 잘못됐어요")
             }
         }
     }
@@ -183,16 +226,16 @@ object RoutineJson {
         val array = when (e) {
             null, is JsonNull -> return null
             is JsonArray -> e
-            else -> throw Bad("${what}는 배열이어야 해요")
+            else -> throw Bad("$what must be an array", "${what}는 배열이어야 해요")
         }
         return array.mapTo(LinkedHashSet()) { d ->
             val key = (d as? JsonPrimitive)?.contentOrNull?.trim()?.lowercase()?.take(3)
-            DAYS[key] ?: throw Bad("$what 항목은 mon…sun이어야 해요 ($d)")
+            DAYS[key] ?: throw Bad("Use mon through sun for days in $what ($d)", "$what 항목은 mon…sun이어야 해요 ($d)")
         }
     }
 
     private fun clock(s: String, what: String): LocalTime {
-        val m = CLOCK.matchEntire(s.trim()) ?: throw Bad("${what}는 HH:mm이어야 해요 ($s)")
+        val m = CLOCK.matchEntire(s.trim()) ?: throw Bad("Enter $what in HH:mm format ($s)", "${what}는 HH:mm이어야 해요 ($s)")
         return LocalTime.of(m.groupValues[1].toInt(), m.groupValues[2].toInt())
     }
 
@@ -297,35 +340,35 @@ object RoutineJson {
     private fun JsonObject.str(key: String): String? = when (val v = this[key]) {
         null, is JsonNull -> null
         is JsonPrimitive -> v.content
-        else -> throw Bad("${key}는 문자열이어야 해요")
+        else -> throw Bad("$key must be a string", "${key}는 문자열이어야 해요")
     }
 
     private fun JsonObject.obj(key: String): JsonObject? = when (val v = this[key]) {
         null, is JsonNull -> null
         is JsonObject -> v
-        else -> throw Bad("${key}는 객체여야 해요")
+        else -> throw Bad("$key must be an object", "${key}는 객체여야 해요")
     }
 
     private fun JsonObject.num(key: String): Double? = when (val v = this[key]) {
         null, is JsonNull -> null
-        is JsonPrimitive -> v.doubleOrNull?.takeIf { it.isFinite() } ?: throw Bad("${key}는 숫자여야 해요")
-        else -> throw Bad("${key}는 숫자여야 해요")
+        is JsonPrimitive -> v.doubleOrNull?.takeIf { it.isFinite() } ?: throw Bad("$key must be a number", "${key}는 숫자여야 해요")
+        else -> throw Bad("$key must be a number", "${key}는 숫자여야 해요")
     }
 
     private fun JsonObject.int(key: String): Int? = num(key)?.let {
-        if (it % 1.0 != 0.0 || it > Int.MAX_VALUE || it < Int.MIN_VALUE) throw Bad("${key}는 정수여야 해요")
+        if (it % 1.0 != 0.0 || it > Int.MAX_VALUE || it < Int.MIN_VALUE) throw Bad("$key must be a whole number", "${key}는 정수여야 해요")
         it.toInt()
     }
 
     private fun JsonObject.long(key: String): Long? = when (val v = this[key]) {
         null, is JsonNull -> null
-        is JsonPrimitive -> v.longOrNull ?: throw Bad("${key}는 정수여야 해요")
-        else -> throw Bad("${key}는 정수여야 해요")
+        is JsonPrimitive -> v.longOrNull ?: throw Bad("$key must be a whole number", "${key}는 정수여야 해요")
+        else -> throw Bad("$key must be a whole number", "${key}는 정수여야 해요")
     }
 
     private fun JsonObject.bool(key: String): Boolean? = when (val v = this[key]) {
         null, is JsonNull -> null
-        is JsonPrimitive -> v.booleanOrNull ?: throw Bad("${key}는 true/false여야 해요")
-        else -> throw Bad("${key}는 true/false여야 해요")
+        is JsonPrimitive -> v.booleanOrNull ?: throw Bad("$key must be true or false", "${key}는 true/false여야 해요")
+        else -> throw Bad("$key must be true or false", "${key}는 true/false여야 해요")
     }
 }

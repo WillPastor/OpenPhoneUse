@@ -135,9 +135,9 @@ class PhoneToolsTest {
 
     @Test
     fun remindAtSchedulesAppNotification() {
-        val r = run("remind_at", """{"time":"18:05","text":"나갈 준비"}""")
+        val r = run("remind_at", """{"time":"18:05","text":"Bring the café receipt"}""")
         assertTrue(r.output, r.output.startsWith("OK") && r.output.contains("18:05"))
-        assertEquals(listOf(ZonedDateTime.of(2026, 11, 1, 18, 5, 0, 0, seoul).toInstant() to "나갈 준비"), reminders.scheduled)
+        assertEquals(listOf(ZonedDateTime.of(2026, 11, 1, 18, 5, 0, 0, seoul).toInstant() to "Bring the café receipt"), reminders.scheduled)
         assertTrue(run("remind_at", """{"time":"내일","text":"x"}""").output.startsWith("ERROR"))
         assertTrue(run("remind_at", """{"time":"2026-10-01T08:00","text":"x"}""").output.startsWith("ERROR"))
         reminders.allowed = false

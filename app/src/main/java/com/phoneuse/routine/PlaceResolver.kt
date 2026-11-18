@@ -1,5 +1,6 @@
 package com.phoneuse.routine
 
+import com.phoneuse.i18n.tr
 import com.phoneuse.memory.MemoryKind
 import com.phoneuse.memory.MemoryStore
 import com.phoneuse.phone.PlaceSearch
@@ -50,6 +51,15 @@ class PlaceResolver(private val places: PlaceSearch?, private val memories: Memo
     companion object {
         const val FROM_MEMORY = "기억에서"
         const val FROM_SEARCH = "지도 검색"
+
+        /** Older routine cards store the source as a label in the language used when they were created. */
+        fun sourceLabel(source: String): String = when (source) {
+            FROM_MEMORY -> tr("From memory", FROM_MEMORY)
+            FROM_SEARCH -> tr("Map search", FROM_SEARCH)
+            "Set by you", "직접 지정" -> tr("Set by you", "직접 지정")
+            else -> source
+        }
+
         private val COORDS = Regex("""(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})""")
         private val ENDINGS = listOf("에 있어요", "에 있어", "에 있음", "이에요", "예요", "이야", "이다", "야", "임", "에요")
 

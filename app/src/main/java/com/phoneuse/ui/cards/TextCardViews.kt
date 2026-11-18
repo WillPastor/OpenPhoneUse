@@ -46,6 +46,7 @@ import com.phoneuse.cards.DigestGroup
 import com.phoneuse.cards.DraftCard
 import com.phoneuse.cards.ResultsCard
 import com.phoneuse.cards.StatCard
+import com.phoneuse.phone.DigestBucket
 import com.phoneuse.ui.theme.MonoStyle
 import com.phoneuse.ui.theme.PuIcons
 import com.phoneuse.ui.theme.pu
@@ -165,6 +166,7 @@ fun DigestCardView(card: DigestCard, onAction: (CardAction) -> Unit, modifier: M
 @Composable
 private fun DigestGroupBox(group: DigestGroup, onAction: (CardAction) -> Unit) {
     val c = pu
+    val label = DigestBucket.displayLabelFor(group.label)
     val muted = group.tone == "muted"
     val labelColor = when (group.tone) {
         "urgent" -> c.accentText
@@ -194,10 +196,10 @@ private fun DigestGroupBox(group: DigestGroup, onAction: (CardAction) -> Unit) {
                     Modifier.background(c.surface).border(1.dp, c.line, shape)
                 },
             )
-            .semantics { contentDescription = group.label },
+            .semantics { contentDescription = label },
     ) {
         Text(
-            "${group.label} · ${group.items.size}",
+            "$label · ${group.items.size}",
             Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 8.dp),
             fontSize = 13.sp,
             fontWeight = FontWeight.Bold,

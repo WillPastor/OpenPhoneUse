@@ -4,6 +4,8 @@ All notable changes to OpenPhoneUse are listed here, newest first. The format fo
 
 ## [Unreleased]
 
+- Notification summaries, parcel tracking, and Routine Builder now use the app language for labels and messages. Side-button suggestions, new memories, reminders, and generated routine instructions also follow the app language.
+
 ## [0.0.7] - 2026-11-15
 
 - **Any OpenAI-compatible server.** A new "Other" provider takes a base URL and an API key. Presets fill in OpenRouter, Groq, Mistral, Together, DeepSeek, Ollama and LM Studio, or you can enter any server that speaks Chat Completions, then pick a model from the list it offers. A local server may need no key. The model must support tool calling. Plain http works only for a server on the phone itself; anything else needs https.

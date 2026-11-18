@@ -111,8 +111,10 @@ internal class RoutineModule(private val access: RoutineAccess?) : ToolModule {
                     "{type:\"device\", kind:\"charger\"|\"bluetooth\"|\"headset\"|\"wifi\", detail?(device or Wi-Fi name)} | " +
                     "{type:\"before_event\", minutes} (before calendar events that have a location). " +
                     "conditions: {days?, time_from?, time_to?(HH:mm), only_when_unlocked?, cooldown_min?(default 60; 1440 = once a day)}. " +
-                    "action: {type:\"ask\", prompt (what the agent should do each time, in Korean), needs_device (true if it must operate apps), " +
-                    "steps?:[{text, device}]} | {type:\"notify\", text} (just a notification) | {type:\"open_app\", package, name?}.",
+                    "action: {type:\"ask\", prompt (what the agent should do each time), needs_device (true if it must operate apps), " +
+                    "steps?:[{text, device}]} | {type:\"notify\", text} (just a notification) | {type:\"open_app\", package, name?}. " +
+                    "Write generated titles, prompts, step descriptions and notification text in the app language. " +
+                    "Preserve names, trigger keywords and any text the user wants verbatim.",
                 schema(
                     required = listOf("routine"),
                     props = mapOf(

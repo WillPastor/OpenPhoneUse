@@ -1,5 +1,6 @@
 package com.phoneuse.assist
 
+import com.phoneuse.i18n.Lang
 import com.phoneuse.model.InputItem
 import com.phoneuse.model.ModelClient
 import com.phoneuse.model.ModelException
@@ -99,6 +100,23 @@ class AssistSuggestionsTest {
     @Test fun modelFailureGivesEmptyList() = runTest {
         val s = AssistSuggester.suggest(FakeModel { throw ModelException(500, "down") }, "screen")
         assertTrue(s.items.isEmpty())
+    }
+
+    @Test fun suggestionsUseTheCurrentAppLanguageEvenWhenTheScreenUsesAnotherLanguage() = runTest {
+        val model = FakeModel { five }
+        val previous = Lang.korean
+        try {
+            Lang.korean = false
+            AssistSuggester.suggest(model, "골목 칼국수")
+            assertTrue("hints in English" in model.instructions)
+            assertTrue("골목 칼국수" in (model.inputs.last().single() as InputItem.UserText).text)
+
+            Lang.korean = true
+            AssistSuggester.suggest(model, "Coffee shop")
+            assertTrue("hints in Korean" in model.instructions)
+        } finally {
+            Lang.korean = previous
+        }
     }
 
     @Test fun screenTextIsCutAndSentAsDataNotInstructions() = runTest {

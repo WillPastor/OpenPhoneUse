@@ -38,4 +38,35 @@ class RoutineEnglishTest {
         assertTrue(AskLog.ours(BriefingText.TODAY_PROMPT_EN))
         assertTrue(AskLog.ours("${BriefingText.ROUTINE_PROMPT_EN} at 08:00: check the weather"))
     }
+
+    @Test fun builderErrorsFollowTheAppLanguage() {
+        val draft = RoutineDraft(title = "Example", prompt = "")
+        assertEquals(RoutineParse.Error("Enter what you want the routine to do"), draft.toRoutine())
+        assertEquals(
+            RoutineParse.Error("Choose an app or enter a keyword for the notification trigger"),
+            draft.copy(trigger = TriggerKind.NOTIFICATION).toRoutine(),
+        )
+        Lang.korean = true
+        assertEquals(RoutineParse.Error("action.prompt가 비었어요"), draft.toRoutine())
+    }
+
+    @Test fun savedPlaceSourcesUseTheCurrentLanguage() {
+        assertEquals("From memory", PlaceResolver.sourceLabel("기억에서"))
+        assertEquals("Map search", PlaceResolver.sourceLabel("지도 검색"))
+        assertEquals("Set by you", PlaceResolver.sourceLabel("직접 지정"))
+        assertEquals("Other source", PlaceResolver.sourceLabel("Other source"))
+        Lang.korean = true
+        assertEquals("직접 지정", PlaceResolver.sourceLabel("Set by you"))
+    }
+
+    @Test fun parcelTemplateKeywordFollowsTheLanguageWhenCreated() {
+        val english = RoutineTemplates.all.single { it.title == "Sort parcel messages" }
+        assertTrue(english.description.contains("'parcel'"))
+        assertEquals("parcel", english.draft.notifKeyword)
+        Lang.korean = true
+        val korean = RoutineTemplates.all.single { it.title == "택배 문자 오면 정리" }
+        assertEquals("택배", korean.draft.notifKeyword)
+        val saved = (english.draft.toRoutine() as RoutineParse.Ok).routine
+        assertEquals("parcel", RoutineDraft.from(saved).notifKeyword)
+    }
 }
