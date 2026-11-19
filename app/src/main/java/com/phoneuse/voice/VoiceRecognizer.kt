@@ -25,8 +25,7 @@ class VoiceRecognizer(private val context: Context, private val onText: (String)
     val state: StateFlow<VoiceState> = _state.asStateFlow()
 
     private val main = Handler(Looper.getMainLooper())
-    private var recognizer: SpeechRecognizer? = null
-    private var recognizerEngine: VoiceEngine? = null
+    private var recognizer: DictationSession? = null
 
     /** Bumped by every start and cancel, so callbacks from an older session are ignored. */
     private var session = 0
@@ -34,7 +33,7 @@ class VoiceRecognizer(private val context: Context, private val onText: (String)
     /** Which recognizer this device offers; [VoiceEngine.Dialog] means the caller shows the system dialog. */
     val engine: VoiceEngine by lazy { detectEngine(context) }
 
-    fun start(languageTag: String) {
+    fun start(languageTag: String, waitSeconds: Int) {
         val engine = engine
         if (engine == VoiceEngine.Dialog) {
             emit(VoiceEvent.Failed(VoiceError.UNAVAILABLE))
@@ -42,13 +41,13 @@ class VoiceRecognizer(private val context: Context, private val onText: (String)
         }
         val id = ++session
         main.removeCallbacksAndMessages(null)
-        val r = recognizerFor(engine) ?: run {
+        recognizer?.destroy()
+        val r = createRecognizer(engine) ?: run {
             emit(VoiceEvent.Start)
             emit(VoiceEvent.Failed(VoiceError.UNAVAILABLE))
             return
         }
         emit(VoiceEvent.Start)
-        r.setRecognitionListener(Listener(id))
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
@@ -56,12 +55,10 @@ class VoiceRecognizer(private val context: Context, private val onText: (String)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, languageTag)
             .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
-        try {
-            r.startListening(intent)
-        } catch (e: RuntimeException) {
-            Log.w(TAG, "speech recognition could not start", e)
-            emit(VoiceEvent.Failed(VoiceError.UNAVAILABLE))
-        }
+            .withDictationWait(waitSeconds)
+        val dictation = DictationSession(r, intent, waitSeconds, Listener(id))
+        recognizer = dictation
+        dictation.listen()
     }
 
     /** Done: stop listening and keep what was said (the final text follows shortly). */
@@ -83,7 +80,7 @@ class VoiceRecognizer(private val context: Context, private val onText: (String)
     fun cancel() {
         session++
         main.removeCallbacksAndMessages(null)
-        runCatching { recognizer?.cancel() }
+        recognizer?.destroy()
         emit(VoiceEvent.Reset)
     }
 
@@ -106,10 +103,8 @@ class VoiceRecognizer(private val context: Context, private val onText: (String)
         _state.value = VoiceState()
     }
 
-    private fun recognizerFor(engine: VoiceEngine): SpeechRecognizer? {
-        recognizer?.let { if (recognizerEngine == engine) return it }
-        recognizer?.let { runCatching { it.destroy() } }
-        recognizer = try {
+    private fun createRecognizer(engine: VoiceEngine): SpeechRecognizer? {
+        return try {
             when (engine) {
                 is VoiceEngine.Service -> SpeechRecognizer.createSpeechRecognizer(context, ComponentName(engine.packageName, engine.className))
                 VoiceEngine.OnDevice -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) SpeechRecognizer.createOnDeviceSpeechRecognizer(context) else null
@@ -119,11 +114,10 @@ class VoiceRecognizer(private val context: Context, private val onText: (String)
             Log.w(TAG, "speech recognizer could not be created", e)
             null
         }
-        recognizerEngine = engine
-        return recognizer
     }
 
     private fun finish(results: List<String>) {
+        recognizer?.destroy()
         val text = finalText(_state.value, results)
         session++
         main.removeCallbacksAndMessages(null)

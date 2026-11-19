@@ -53,6 +53,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.withStarted
 import com.phoneuse.app.AppGraph
 import com.phoneuse.app.ThemeMode
 import com.phoneuse.i18n.tr
@@ -65,7 +66,10 @@ import com.phoneuse.ui.theme.PuIcons
 import com.phoneuse.ui.theme.SendCircle
 import com.phoneuse.ui.theme.isDark
 import com.phoneuse.ui.theme.pu
+import com.phoneuse.voice.withDictationWait
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -77,8 +81,11 @@ import kotlinx.coroutines.launch
 class QuickAskActivity : ComponentActivity() {
     private var mode = QuickAskMode.ASK
     private var conversation: Long? = null
+    private var preparingVoice: Job? = null
+    private var voiceDialogOpen = false
 
     private val voice = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        voiceDialogOpen = false
         val text = if (result.resultCode == Activity.RESULT_OK) {
             result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
         } else {
@@ -101,7 +108,15 @@ class QuickAskActivity : ComponentActivity() {
         }
         mode = requested!!
         conversation = target
-        if (mode == QuickAskMode.VOICE && savedInstanceState == null) listen()
+        voiceDialogOpen = savedInstanceState?.getBoolean(STATE_VOICE_DIALOG) == true
+        if (mode == QuickAskMode.VOICE && !voiceDialogOpen) {
+            if (savedInstanceState != null) {
+                // The sheet stopped before it opened the external dialog.
+                finish()
+                return
+            }
+            listen()
+        }
         setContent {
             val theme by AppGraph.themeMode.collectAsState()
             PhoneUseTheme(isDark(theme ?: ThemeMode.SYSTEM)) {
@@ -112,10 +127,34 @@ class QuickAskActivity : ComponentActivity() {
         }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(STATE_VOICE_DIALOG, voiceDialogOpen)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (preparingVoice?.isActive == true) {
+            preparingVoice?.cancel()
+            if (mode == QuickAskMode.VOICE) finish()
+        }
+    }
+
     private fun listen() {
+        if (preparingVoice?.isActive == true || voiceDialogOpen) return
+        preparingVoice = lifecycleScope.launch {
+            val waitSeconds = AppGraph.settings.dictationWaitSeconds.first()
+            lifecycle.withStarted {
+                if (!isFinishing) openVoiceDialog(waitSeconds)
+            }
+        }
+    }
+
+    private fun openVoiceDialog(waitSeconds: Int) {
         val speech = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             .putExtra(RecognizerIntent.EXTRA_PROMPT, tr("Speak now", "말해 주세요"))
+            .withDictationWait(waitSeconds)
             .apply {
                 AppGraph.voiceLanguage.value.tag?.let {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, it)
@@ -123,8 +162,10 @@ class QuickAskActivity : ComponentActivity() {
                 }
             }
         try {
+            voiceDialogOpen = true
             voice.launch(speech)
         } catch (e: ActivityNotFoundException) {
+            voiceDialogOpen = false
             Toast.makeText(this, tr("Voice input isn't available on this device", "이 기기에서 음성 입력을 쓸 수 없어요"), Toast.LENGTH_SHORT).show()
             if (mode == QuickAskMode.VOICE) finish()
         }
@@ -162,6 +203,7 @@ class QuickAskActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_MODE = "com.phoneuse.extra.QUICK_ASK_MODE"
+        private const val STATE_VOICE_DIALOG = "voiceDialogOpen"
     }
 }
 
