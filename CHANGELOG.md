@@ -4,6 +4,7 @@ All notable changes to OpenPhoneUse are listed here, newest first. The format fo
 
 ## [Unreleased]
 
+- The default assistant shows its input and microphone as soon as the sheet opens. When there are no screen suggestions, the input is ready for typing.
 - In a batch, the step right after a two-finger rotation or swipe checks screen capture again even when the screen looks unchanged, and a two-finger gesture makes one capture check before it starts instead of two.
 
 ## [0.0.8] - 2026-11-23

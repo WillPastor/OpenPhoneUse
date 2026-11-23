@@ -10,16 +10,15 @@ import android.provider.Settings
 import android.service.voice.VoiceInteractionSession
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
@@ -34,7 +33,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -132,11 +130,14 @@ class PhoneUseSession(context: Context) : VoiceInteractionSession(context) {
         window?.window?.apply {
             // The session window keeps away from the IME by default; the sheet needs the keyboard.
             clearFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
-            // The keyboard comes up from the sheet itself: at once for the plain input, but not over the suggestions.
-            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            // Fit the voice window to the keyboard once, including on short landscape displays.
+            attributes = attributes.apply {
+                fitInsetsTypes = WindowInsets.Type.ime()
+                fitInsetsSides = WindowInsets.Side.all()
+            }
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            // Insets reach Compose, which pads for the keyboard and navigation bar itself.
+            // Compose handles the navigation bar when the keyboard is hidden.
             setDecorFitsSystemWindows(false)
         }
     }
@@ -238,17 +239,8 @@ private fun AssistSheet(
     }
     // "이 화면에서" (null while they load); none = the plain input with the keyboard up.
     var suggestions by remember { mutableStateOf<AssistSuggestions?>(null) }
-    // The sheet rises once composed, so its first frame is never a sheet already in place.
-    var risen by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        risen = true
-        suggestions = loadSuggestions()
-        if (suggestions?.items.isNullOrEmpty()) {
-            focus.requestFocus()
-            keyboard?.show()
-        }
-    }
+    LaunchedEffect(Unit) { suggestions = loadSuggestions() }
     val shown = suggestions?.items.orEmpty()
 
     Box(
@@ -256,113 +248,113 @@ private fun AssistSheet(
             .fillMaxSize()
             .background(c.scrim)
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = onDismiss)
-            .imePadding()
             .navigationBarsPadding(),
         contentAlignment = Alignment.BottomCenter,
     ) {
-        AnimatedVisibility(
-            visible = risen,
-            enter = slideInVertically(spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow)) { it } + fadeIn(tween(160)),
+        val shape = RoundedCornerShape(28.dp)
+        Column(
+            Modifier
+                .padding(8.dp)
+                .widthIn(max = 560.dp)
+                .fillMaxWidth()
+                .shadow(16.dp, shape, ambientColor = SheetShadow, spotColor = SheetShadow)
+                .clip(shape)
+                .background(c.surface)
+                // Taps inside the sheet must not reach the scrim.
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+                .padding(start = 12.dp, end = 12.dp, top = 14.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            val shape = RoundedCornerShape(28.dp)
-            Column(
-                Modifier
-                    .padding(8.dp)
-                    .widthIn(max = 560.dp)
-                    .fillMaxWidth()
-                    .shadow(16.dp, shape, ambientColor = SheetShadow, spotColor = SheetShadow)
-                    .clip(shape)
-                    .background(c.surface)
-                    // Taps inside the sheet must not reach the scrim.
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
-                    .padding(start = 12.dp, end = 12.dp, top = 14.dp, bottom = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                val loading = suggestions == null
-                val plain = !loading && shown.isEmpty()
-                Row(Modifier.fillMaxWidth().padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    val title = suggestions?.title.orEmpty()
-                    val head = when {
-                        loading -> tr("Looking at the screen…", "화면을 살펴보는 중…")
-                        plain -> tr("How can I help?", "무엇을 도와드릴까요?")
-                        title.isEmpty() -> tr("On this screen", "이 화면에서")
-                        else -> tr("On this screen", "이 화면에서") + " · " + title
-                    }
-                    Text(
-                        head,
-                        fontSize = if (plain) 17.sp else 13.sp,
-                        fontWeight = if (plain) FontWeight.Bold else FontWeight.SemiBold,
-                        color = if (plain) c.text else c.textSub,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (recent != null) ContinueToggle(recent, chipSelected) { chipSelected = !chipSelected }
+            val loading = suggestions == null
+            val plain = !loading && shown.isEmpty()
+            LaunchedEffect(plain) {
+                if (plain) {
+                    focus.requestFocus()
+                    keyboard?.show()
                 }
-                if (!serviceOn) ServiceBanner(onOpenAccessibility)
-                if (loading) SuggestionSkeleton()
-                AnimatedVisibility(
-                    visible = shown.isNotEmpty(),
-                    enter = fadeIn(tween(200)) + slideInVertically(tween(240)) { it / 6 },
-                ) {
-                    Column {
-                        shown.forEach { s ->
-                            SuggestionRow(s) {
-                                val result = onSend(s.prompt, target, true)
-                                if (result is SubmitResult.Blocked) notice = result.reason
-                            }
+            }
+            Row(Modifier.fillMaxWidth().padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                val title = suggestions?.title.orEmpty()
+                val head = when {
+                    loading -> tr("Looking at the screen…", "화면을 살펴보는 중…")
+                    plain -> tr("How can I help?", "무엇을 도와드릴까요?")
+                    title.isEmpty() -> tr("On this screen", "이 화면에서")
+                    else -> tr("On this screen", "이 화면에서") + " · " + title
+                }
+                Text(
+                    head,
+                    fontSize = if (plain) 17.sp else 13.sp,
+                    fontWeight = if (plain) FontWeight.Bold else FontWeight.SemiBold,
+                    color = if (plain) c.text else c.textSub,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (recent != null) ContinueToggle(recent, chipSelected) { chipSelected = !chipSelected }
+            }
+            if (!serviceOn) ServiceBanner(onOpenAccessibility)
+            if (loading) SuggestionSkeleton()
+            AnimatedVisibility(
+                visible = shown.isNotEmpty(),
+                enter = fadeIn(tween(200)) + slideInVertically(tween(240)) { it / 6 },
+            ) {
+                Column {
+                    shown.forEach { s ->
+                        SuggestionRow(s) {
+                            val result = onSend(s.prompt, target, true)
+                            if (result is SubmitResult.Blocked) notice = result.reason
                         }
                     }
                 }
-                // The banner already says the service is off; other reasons (a run in progress) show here.
-                notice?.takeUnless { !serviceOn && it == AssistSender.NO_SERVICE }?.let {
-                    Text(it, fontSize = 14.sp, color = c.danger, modifier = Modifier.padding(horizontal = 8.dp))
-                }
-                Row(
+            }
+            // The banner already says the service is off; other reasons (a run in progress) show here.
+            notice?.takeUnless { !serviceOn && it == AssistSender.NO_SERVICE }?.let {
+                Text(it, fontSize = 14.sp, color = c.danger, modifier = Modifier.padding(horizontal = 8.dp))
+            }
+            Row(
+                Modifier
+                    .padding(top = 4.dp)
+                    .fillMaxWidth()
+                    .heightIn(min = 56.dp)
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(c.sunken)
+                    .padding(4.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                val placeholder = if (chipSelected) tr("Keep talking", "이어서 말해 주세요") else tr("Say it or type it", "직접 말하거나 입력하세요")
+                Box(
                     Modifier
-                        .padding(top = 4.dp)
-                        .fillMaxWidth()
-                        .heightIn(min = 56.dp)
-                        .clip(RoundedCornerShape(28.dp))
-                        .background(c.sunken)
-                        .padding(4.dp),
-                    verticalAlignment = Alignment.Bottom,
+                        .weight(1f)
+                        .heightIn(min = 48.dp)
+                        .padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+                    contentAlignment = Alignment.CenterStart,
                 ) {
-                    val placeholder = if (chipSelected) tr("Keep talking", "이어서 말해 주세요") else tr("Say it or type it", "직접 말하거나 입력하세요")
-                    Box(
-                        Modifier
-                            .weight(1f)
-                            .heightIn(min = 48.dp)
-                            .padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
-                        contentAlignment = Alignment.CenterStart,
-                    ) {
-                        if (text.isEmpty()) Text(placeholder, fontSize = 16.sp, lineHeight = 22.sp, color = c.textSub, maxLines = 1)
-                        BasicTextField(
-                            value = text,
-                            onValueChange = {
-                                text = it
-                                notice = null
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .focusRequester(focus)
-                                .semantics { contentDescription = placeholder },
-                            textStyle = TextStyle(fontFamily = PlexSans, fontSize = 16.sp, lineHeight = 22.sp, color = c.text),
-                            cursorBrush = SolidColor(c.accent),
-                            maxLines = 4,
-                            keyboardOptions = KeyboardOptions(
-                                capitalization = KeyboardCapitalization.Sentences,
-                                imeAction = ImeAction.Send,
-                            ),
-                            keyboardActions = KeyboardActions(onSend = { if (text.isNotBlank()) submit() }),
-                        )
-                    }
-                    MicOrSend(
-                        send = text.isNotBlank(),
-                        onSend = { submit() },
-                        onVoice = { onVoice(target)?.let { notice = it } },
+                    if (text.isEmpty()) Text(placeholder, fontSize = 16.sp, lineHeight = 22.sp, color = c.textSub, maxLines = 1)
+                    BasicTextField(
+                        value = text,
+                        onValueChange = {
+                            text = it
+                            notice = null
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focus)
+                            .semantics { contentDescription = placeholder },
+                        textStyle = TextStyle(fontFamily = PlexSans, fontSize = 16.sp, lineHeight = 22.sp, color = c.text),
+                        cursorBrush = SolidColor(c.accent),
+                        maxLines = 4,
+                        keyboardOptions = KeyboardOptions(
+                            capitalization = KeyboardCapitalization.Sentences,
+                            imeAction = ImeAction.Send,
+                        ),
+                        keyboardActions = KeyboardActions(onSend = { if (text.isNotBlank()) submit() }),
                     )
                 }
+                MicOrSend(
+                    send = text.isNotBlank(),
+                    onSend = { submit() },
+                    onVoice = { onVoice(target)?.let { notice = it } },
+                )
             }
         }
     }
