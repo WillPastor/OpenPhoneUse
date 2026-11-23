@@ -419,7 +419,8 @@ class SettingsStore internal constructor(
     companion object {
         const val DEFAULT_MODEL = "gpt-6.1-terra"
         const val DEFAULT_FAST_MODE = true
-        val DEFAULT_ASSIST_ACTION: AssistAction = AssistAction.TYPE
+        /** "Ideas for this screen" until the user picks "Talk right away", which may open the microphone by itself. */
+        val DEFAULT_ASSIST_ACTION: AssistAction = AssistAction.SUGGEST
         /** Dictation follows the device language until the user picks one. */
         val DEFAULT_VOICE_LANGUAGE: VoiceLanguage = VoiceLanguage.SYSTEM
         /** The lighter preset routines use when "루틴은 가벼운 모델로" is on. */

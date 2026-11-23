@@ -2,6 +2,7 @@ package com.phoneuse.assist
 
 import com.phoneuse.i18n.tr
 import android.Manifest
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -14,6 +15,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityManager
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
@@ -98,6 +100,7 @@ import com.phoneuse.service.AccessibilityTreeReader
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import com.phoneuse.chat.Conversation
 import com.phoneuse.overlay.OverlayLifecycleOwner
 import com.phoneuse.service.PhoneUseAccessibilityService
@@ -178,7 +181,7 @@ class PhoneUseSession(context: Context) : VoiceInteractionSession(context) {
                 PhoneUseTheme(isDark(mode ?: ThemeMode.SYSTEM), (fontSize ?: FontSize.DEFAULT).scale) {
                     AssistSheet(
                         lifecycle = owner.lifecycle,
-                        canListenOnOpen = { allowVoiceOnShow && AssistSession.currentBlocker() == null },
+                        canListenOnOpen = ::canListenOnOpen,
                         onDismiss = { hide() },
                         onSend = { text, conversation, suggested ->
                             AssistSession.sender.submit(text, conversation, suggested) { hide() }
@@ -200,6 +203,22 @@ class PhoneUseSession(context: Context) : VoiceInteractionSession(context) {
     private fun pauseSession() {
         allowVoiceOnShow = false
         owner.pause()
+    }
+
+    /** Checked on open and again just before the microphone starts. An unreadable lock state counts as locked. */
+    private fun canListenOnOpen(action: AssistAction?, inSheetRecognizer: Boolean): Boolean {
+        val keyguard = context.getSystemService(KeyguardManager::class.java)
+        val accessibility = context.getSystemService(AccessibilityManager::class.java)
+        val microphone = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+        return shouldListenOnOpen(
+            action = action,
+            openedBySystem = allowVoiceOnShow,
+            micGranted = microphone == PackageManager.PERMISSION_GRANTED,
+            inSheetRecognizer = inSheetRecognizer,
+            canStartTask = AssistSession.currentBlocker() == null,
+            keyguardLocked = keyguard?.isKeyguardLocked != false,
+            touchExploration = accessibility?.isTouchExplorationEnabled == true,
+        )
     }
 
     override fun hide() {
@@ -251,7 +270,7 @@ class PhoneUseSession(context: Context) : VoiceInteractionSession(context) {
 @Composable
 private fun AssistSheet(
     lifecycle: Lifecycle,
-    canListenOnOpen: () -> Boolean,
+    canListenOnOpen: (action: AssistAction?, inSheetRecognizer: Boolean) -> Boolean,
     onDismiss: () -> Unit,
     onSend: (text: String, conversation: Long?, suggested: Boolean) -> SubmitResult,
     onVoice: (conversation: Long?) -> String?,
@@ -265,7 +284,6 @@ private fun AssistSheet(
     var text by remember { mutableStateOf("") }
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
-    val context = LocalContext.current
     val windowInfo = LocalWindowInfo.current
     val target = targetConversation(chipSelected, recent)
     // Why the last send or 🎤 could not start; the text stays so it can be sent again.
@@ -305,13 +323,12 @@ private fun AssistSheet(
             suggestions = loadSuggestions()
             loadingIdeas = false
         } else {
-            if (action == AssistAction.TYPE &&
-                context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED &&
-                voice.engine != VoiceEngine.Dialog
-            ) {
-                snapshotFlow { windowInfo.isWindowFocused }.first { it }
+            val mayListen = { canListenOnOpen(action, voice.engine != VoiceEngine.Dialog) }
+            if (mayListen()) {
+                // The microphone opens once the sheet has focus. If focus never arrives, the editor opens instead.
+                withTimeoutOrNull(FOCUS_WAIT_MS) { snapshotFlow { windowInfo.isWindowFocused }.first { it } }
                 val language = AppGraph.voiceLanguageNow()
-                if (!inputChosen && windowInfo.isWindowFocused && canListenOnOpen()) {
+                if (!inputChosen && windowInfo.isWindowFocused && mayListen()) {
                     voice.start(speechLanguageTag(language, Locale.getDefault()))
                 }
             }
@@ -431,7 +448,8 @@ private fun AssistSheet(
                             .onFocusChanged {
                                 if (it.isFocused) {
                                     inputChosen = true
-                                    if (voice.state.value.active) voice.cancel()
+                                    // Switching to typing keeps the words already heard, in the editor.
+                                    if (voice.state.value.active) voice.interrupt()
                                 }
                             }
                             .focusRequester(focus)
@@ -494,6 +512,9 @@ private fun rememberSheetRecognizer(
     }
     return voice
 }
+
+/** How long "Talk right away" waits for the sheet's window to gain focus before it gives up on listening. */
+private const val FOCUS_WAIT_MS = 1_500L
 
 /** The sheet floats over another app: a neutral shadow, never a coloured glow. */
 private val SheetShadow = androidx.compose.ui.graphics.Color(0x2E14161A)

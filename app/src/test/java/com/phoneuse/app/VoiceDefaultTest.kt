@@ -41,8 +41,8 @@ class VoiceDefaultTest {
         assertEquals(VoiceLanguage.KOREAN, settings.voiceLanguage.first())
     }
 
-    @Test fun sideButtonDefaultsToTalkRightAway() = runBlocking {
-        assertEquals(AssistAction.TYPE, settings.assistAction.first())
+    @Test fun sideButtonDefaultsToIdeasForThisScreen() = runBlocking {
+        assertEquals(AssistAction.SUGGEST, settings.assistAction.first())
     }
 
     @Test fun sideButtonHonorsExistingPreferences() = runBlocking {

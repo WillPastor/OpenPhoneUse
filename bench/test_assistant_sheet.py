@@ -8,7 +8,7 @@ denied, accessibility off, or no in-app speech provider:
 
 For the voice test, use a quiet test device with an in-app speech provider, microphone
 permission and accessibility enabled. Map a long power-button press to the digital assistant
-and use the default voice mode or select "Talk right away":
+and select "Talk right away":
 
     python bench/test_assistant_sheet.py --voice
 """
