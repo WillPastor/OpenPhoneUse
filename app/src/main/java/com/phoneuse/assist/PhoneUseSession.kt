@@ -13,7 +13,6 @@ import android.provider.Settings
 import android.service.voice.VoiceInteractionSession
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityManager
 import android.widget.Toast
@@ -66,11 +65,17 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.relocation.BringIntoViewModifierNode
+import androidx.compose.ui.relocation.bringIntoView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -79,6 +84,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -152,14 +158,11 @@ class PhoneUseSession(context: Context) : VoiceInteractionSession(context) {
         window?.window?.apply {
             // The session window keeps away from the IME by default; the sheet needs the keyboard.
             clearFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
-            // Fit the voice window to the keyboard once, including on short landscape displays.
-            attributes = attributes.apply {
-                fitInsetsTypes = WindowInsets.Type.ime()
-                fitInsetsSides = WindowInsets.Side.all()
-            }
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            // Compose handles the navigation bar when the keyboard is hidden.
+            // The sheet pads for the navigation bar itself and does nothing for the keyboard. The system pans a
+            // session window so that the focused field stays above the keyboard, whichever soft input mode the
+            // window requests. Padding or fitting the window for the keyboard as well moves the sheet twice.
             setDecorFitsSystemWindows(false)
         }
     }
@@ -354,7 +357,7 @@ private fun AssistSheet(
         val shape = RoundedCornerShape(28.dp)
         Column(
             Modifier
-                .padding(8.dp)
+                .padding(SheetMargin)
                 .widthIn(max = 560.dp)
                 .fillMaxWidth()
                 .shadow(16.dp, shape, ambientColor = SheetShadow, spotColor = SheetShadow)
@@ -362,7 +365,7 @@ private fun AssistSheet(
                 .background(c.surface)
                 // Taps inside the sheet must not reach the scrim.
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
-                .padding(start = 12.dp, end = 12.dp, top = 14.dp, bottom = 12.dp),
+                .padding(start = 12.dp, end = 12.dp, top = 14.dp, bottom = CardBottomPadding),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             val plain = !loadingIdeas && shown.isEmpty()
@@ -423,47 +426,53 @@ private fun AssistSheet(
                     .heightIn(min = 56.dp)
                     .clip(RoundedCornerShape(28.dp))
                     .background(c.sunken)
-                    .padding(4.dp),
+                    .padding(InputRowPadding),
                 verticalAlignment = Alignment.Bottom,
             ) {
                 val placeholder = if (chipSelected) tr("Keep talking", "이어서 말해 주세요") else tr("Say it or type it", "직접 말하거나 입력하세요")
-                Box(
-                    Modifier
+                BasicTextField(
+                    value = text,
+                    onValueChange = {
+                        inputChosen = true
+                        if (voice.state.value.active) voice.cancel()
+                        text = it
+                        notice = null
+                    },
+                    modifier = Modifier
                         .weight(1f)
-                        .heightIn(min = 48.dp)
-                        .padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
-                    contentAlignment = Alignment.CenterStart,
-                ) {
-                    if (text.isEmpty()) Text(placeholder, fontSize = 16.sp, lineHeight = 22.sp, color = c.textSub, maxLines = 1)
-                    BasicTextField(
-                        value = text,
-                        onValueChange = {
-                            inputChosen = true
-                            if (voice.state.value.active) voice.cancel()
-                            text = it
-                            notice = null
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .onFocusChanged {
-                                if (it.isFocused) {
-                                    inputChosen = true
-                                    // Switching to typing keeps the words already heard, in the editor.
-                                    if (voice.state.value.active) voice.interrupt()
-                                }
+                        .liftsSheetAboveKeyboard(BelowEditor)
+                        .onFocusChanged {
+                            if (it.isFocused) {
+                                inputChosen = true
+                                // Switching to typing keeps the words already heard, in the editor.
+                                if (voice.state.value.active) voice.interrupt()
                             }
-                            .focusRequester(focus)
-                            .semantics { contentDescription = placeholder },
-                        textStyle = TextStyle(fontFamily = PlexSans, fontSize = 16.sp, lineHeight = 22.sp, color = c.text),
-                        cursorBrush = SolidColor(c.accent),
-                        maxLines = 4,
-                        keyboardOptions = KeyboardOptions(
-                            capitalization = KeyboardCapitalization.Sentences,
-                            imeAction = ImeAction.Send,
-                        ),
-                        keyboardActions = KeyboardActions(onSend = { if (text.isNotBlank()) submit() }),
-                    )
-                }
+                        }
+                        .focusRequester(focus)
+                        .semantics { contentDescription = placeholder },
+                    textStyle = TextStyle(fontFamily = PlexSans, fontSize = 16.sp, lineHeight = 22.sp, color = c.text),
+                    cursorBrush = SolidColor(c.accent),
+                    maxLines = 4,
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Sentences,
+                        imeAction = ImeAction.Send,
+                    ),
+                    keyboardActions = KeyboardActions(onSend = { if (text.isNotBlank()) submit() }),
+                    decorationBox = { field ->
+                        Box(
+                            Modifier
+                                .padding(bottom = BelowEditor)
+                                .heightIn(min = 48.dp)
+                                .padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            if (text.isEmpty()) {
+                                Text(placeholder, fontSize = 16.sp, lineHeight = 22.sp, color = c.textSub, maxLines = 1)
+                            }
+                            field()
+                        }
+                    },
+                )
                 if (showVoice) {
                     VoiceOrb(voiceState, voice::stop, size = 40.dp)
                 } else {
@@ -515,6 +524,40 @@ private fun rememberSheetRecognizer(
 
 /** How long "Talk right away" waits for the sheet's window to gain focus before it gives up on listening. */
 private const val FOCUS_WAIT_MS = 1_500L
+
+/** The gap around the sheet, the padding under the card's content, and the padding inside the input row. */
+private val SheetMargin = 8.dp
+private val CardBottomPadding = 12.dp
+private val InputRowPadding = 4.dp
+
+/** Everything that lies under the editor, down to the bottom of the sheet's margin. */
+private val BelowEditor = InputRowPadding + CardBottomPadding + SheetMargin
+
+/**
+ * Makes the system lift the whole sheet above the keyboard. The system pans a session window until the focused field
+ * clears the keyboard, and while the user types Compose asks for the cursor's line to stay in view. Both stop at the
+ * text and leave the rest of the sheet behind the keyboard. So the field's bounds reach [below] further down, to the
+ * bottom of the sheet's margin, and a request to keep part of the field in view asks for all of it. The row is told
+ * the field's usual height.
+ */
+private fun Modifier.liftsSheetAboveKeyboard(below: Dp): Modifier = this
+    .layout { measurable, constraints ->
+        val extra = below.roundToPx()
+        val max = if (constraints.hasBoundedHeight) constraints.maxHeight + extra else constraints.maxHeight
+        val field = measurable.measure(constraints.copy(maxHeight = max))
+        layout(field.width, (field.height - extra).coerceAtLeast(0)) { field.place(0, 0) }
+    }
+    .then(WholeFieldIntoView)
+
+private data object WholeFieldIntoView : ModifierNodeElement<WholeFieldIntoViewNode>() {
+    override fun create() = WholeFieldIntoViewNode()
+    override fun update(node: WholeFieldIntoViewNode) = Unit
+}
+
+private class WholeFieldIntoViewNode : Modifier.Node(), BringIntoViewModifierNode {
+    override suspend fun bringIntoView(childCoordinates: LayoutCoordinates, boundsProvider: () -> Rect?) =
+        bringIntoView()
+}
 
 /** The sheet floats over another app: a neutral shadow, never a coloured glow. */
 private val SheetShadow = androidx.compose.ui.graphics.Color(0x2E14161A)
