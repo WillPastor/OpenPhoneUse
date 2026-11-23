@@ -1,8 +1,10 @@
 package com.phoneuse.assist
 
 import com.phoneuse.i18n.tr
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
@@ -45,12 +47,15 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -58,9 +63,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -71,6 +79,8 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
@@ -78,7 +88,7 @@ import androidx.compose.foundation.layout.height
 import com.phoneuse.app.AppGraph
 import com.phoneuse.app.AssistAction
 import com.phoneuse.app.FontSize
-import com.phoneuse.app.SettingsStore
+import com.phoneuse.app.voiceLanguageNow
 import com.phoneuse.app.Source
 import com.phoneuse.app.ThemeMode
 import com.phoneuse.model.ModelOptions
@@ -96,6 +106,13 @@ import com.phoneuse.ui.theme.PlexSans
 import com.phoneuse.ui.theme.PuIcons
 import com.phoneuse.ui.theme.isDark
 import com.phoneuse.ui.theme.pu
+import com.phoneuse.ui.voice.VoiceCaption
+import com.phoneuse.ui.voice.VoiceOrb
+import com.phoneuse.voice.VoiceEngine
+import com.phoneuse.voice.VoicePhase
+import com.phoneuse.voice.VoiceRecognizer
+import com.phoneuse.voice.speechLanguageTag
+import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -118,12 +135,14 @@ object AssistSession {
 
 /**
  * The side-button sheet: "이 화면에서" (three suggestions for the screen underneath, never run until tapped), a
- * text toggle to continue the most recent conversation, and the input with one button (🎤, or send once typed). Without
- * suggestions it is "무엇을 도와드릴까요?" with the input focused and the keyboard up. Sending hides the sheet, then runs the message once the screen settles;
+ * text toggle to continue the most recent conversation, and the input with one button (🎤, or send once typed).
+ * "Talk right away" listens in the sheet when possible. Tapping the editor switches to typing.
+ * Sending hides the sheet, then runs the message once the screen settles;
  * the run's progress shows in the overlay dock and the conversation is saved in the chat app.
  */
 class PhoneUseSession(context: Context) : VoiceInteractionSession(context) {
     private val owner = OverlayLifecycleOwner()
+    private var allowVoiceOnShow = false
 
     override fun onCreate() {
         super.onCreate()
@@ -158,6 +177,8 @@ class PhoneUseSession(context: Context) : VoiceInteractionSession(context) {
                 val fontSize by AppGraph.fontSize.collectAsState()
                 PhoneUseTheme(isDark(mode ?: ThemeMode.SYSTEM), (fontSize ?: FontSize.DEFAULT).scale) {
                     AssistSheet(
+                        lifecycle = owner.lifecycle,
+                        canListenOnOpen = { allowVoiceOnShow && AssistSession.currentBlocker() == null },
                         onDismiss = { hide() },
                         onSend = { text, conversation, suggested ->
                             AssistSession.sender.submit(text, conversation, suggested) { hide() }
@@ -172,11 +193,23 @@ class PhoneUseSession(context: Context) : VoiceInteractionSession(context) {
 
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
+        allowVoiceOnShow = showFlags and (SHOW_SOURCE_APPLICATION or SHOW_SOURCE_ACTIVITY) == 0
         owner.resume()
     }
 
-    override fun onHide() {
+    private fun pauseSession() {
+        allowVoiceOnShow = false
         owner.pause()
+    }
+
+    override fun hide() {
+        // Back and Home request an asynchronous hide. Cancel recognition before a queued result can send.
+        pauseSession()
+        super.hide()
+    }
+
+    override fun onHide() {
+        pauseSession()
         super.onHide()
         // One sheet per invocation: the next long-press starts fresh.
         finish()
@@ -217,6 +250,8 @@ class PhoneUseSession(context: Context) : VoiceInteractionSession(context) {
 
 @Composable
 private fun AssistSheet(
+    lifecycle: Lifecycle,
+    canListenOnOpen: () -> Boolean,
     onDismiss: () -> Unit,
     onSend: (text: String, conversation: Long?, suggested: Boolean) -> SubmitResult,
     onVoice: (conversation: Long?) -> String?,
@@ -230,17 +265,65 @@ private fun AssistSheet(
     var text by remember { mutableStateOf("") }
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
+    val context = LocalContext.current
+    val windowInfo = LocalWindowInfo.current
     val target = targetConversation(chipSelected, recent)
     // Why the last send or 🎤 could not start; the text stays so it can be sent again.
     var notice by remember { mutableStateOf<String?>(null) }
+    var inputChosen by remember { mutableStateOf(false) }
+    val voice = rememberSheetRecognizer(
+        lifecycle,
+        onText = { heard ->
+            val result = onSend(heard, target, false)
+            if (result is SubmitResult.Blocked) {
+                text = heard
+                notice = result.reason
+            }
+        },
+        // Words heard before listening was interrupted go to the editor. They are never sent on their own.
+        onInterrupted = { heard -> text = heard },
+    )
+    val voiceState by voice.state.collectAsState()
     val submit = {
         val result = onSend(text, target, false)
         if (result is SubmitResult.Blocked) notice = result.reason
     }
-    // "이 화면에서" (null while they load); none = the plain input with the keyboard up.
+    // Keep the editor usable while reading the saved mode or starting recognition.
     var suggestions by remember { mutableStateOf<AssistSuggestions?>(null) }
+    var loadingIdeas by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) { suggestions = loadSuggestions() }
+    LaunchedEffect(Unit) {
+        val action = try {
+            AppGraph.settings.assistAction.first()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        if (action == AssistAction.SUGGEST) {
+            loadingIdeas = true
+            suggestions = loadSuggestions()
+            loadingIdeas = false
+        } else {
+            if (action == AssistAction.TYPE &&
+                context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED &&
+                voice.engine != VoiceEngine.Dialog
+            ) {
+                snapshotFlow { windowInfo.isWindowFocused }.first { it }
+                val language = AppGraph.voiceLanguageNow()
+                if (!inputChosen && windowInfo.isWindowFocused && canListenOnOpen()) {
+                    voice.start(speechLanguageTag(language, Locale.getDefault()))
+                }
+            }
+            suggestions = AssistSuggestions.NONE
+        }
+    }
+    LaunchedEffect(voiceState.error) {
+        voiceState.error?.let {
+            notice = it.message
+            voice.clearError()
+        }
+    }
     val shown = suggestions?.items.orEmpty()
 
     Box(
@@ -265,10 +348,11 @@ private fun AssistSheet(
                 .padding(start = 12.dp, end = 12.dp, top = 14.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            val loading = suggestions == null
-            val plain = !loading && shown.isEmpty()
-            LaunchedEffect(plain) {
-                if (plain) {
+            val plain = !loadingIdeas && shown.isEmpty()
+            val openKeyboard = suggestions != null && shown.isEmpty()
+            val showVoice = voiceState.listening || voiceState.phase == VoicePhase.PROCESSING
+            LaunchedEffect(openKeyboard, voiceState.active) {
+                if (openKeyboard && !voice.state.value.active) {
                     focus.requestFocus()
                     keyboard?.show()
                 }
@@ -276,24 +360,28 @@ private fun AssistSheet(
             Row(Modifier.fillMaxWidth().padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 val title = suggestions?.title.orEmpty()
                 val head = when {
-                    loading -> tr("Looking at the screen…", "화면을 살펴보는 중…")
+                    loadingIdeas -> tr("Looking at the screen…", "화면을 살펴보는 중…")
                     plain -> tr("How can I help?", "무엇을 도와드릴까요?")
                     title.isEmpty() -> tr("On this screen", "이 화면에서")
                     else -> tr("On this screen", "이 화면에서") + " · " + title
                 }
-                Text(
-                    head,
-                    fontSize = if (plain) 17.sp else 13.sp,
-                    fontWeight = if (plain) FontWeight.Bold else FontWeight.SemiBold,
-                    color = if (plain) c.text else c.textSub,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
+                if (showVoice) {
+                    VoiceCaption(voiceState, idleTitle = "", idleHint = "", modifier = Modifier.weight(1f))
+                } else {
+                    Text(
+                        head,
+                        fontSize = if (plain) 17.sp else 13.sp,
+                        fontWeight = if (plain) FontWeight.Bold else FontWeight.SemiBold,
+                        color = if (plain) c.text else c.textSub,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
                 if (recent != null) ContinueToggle(recent, chipSelected) { chipSelected = !chipSelected }
             }
             if (!serviceOn) ServiceBanner(onOpenAccessibility)
-            if (loading) SuggestionSkeleton()
+            if (loadingIdeas) SuggestionSkeleton()
             AnimatedVisibility(
                 visible = shown.isNotEmpty(),
                 enter = fadeIn(tween(200)) + slideInVertically(tween(240)) { it / 6 },
@@ -333,11 +421,19 @@ private fun AssistSheet(
                     BasicTextField(
                         value = text,
                         onValueChange = {
+                            inputChosen = true
+                            if (voice.state.value.active) voice.cancel()
                             text = it
                             notice = null
                         },
                         modifier = Modifier
                             .fillMaxWidth()
+                            .onFocusChanged {
+                                if (it.isFocused) {
+                                    inputChosen = true
+                                    if (voice.state.value.active) voice.cancel()
+                                }
+                            }
                             .focusRequester(focus)
                             .semantics { contentDescription = placeholder },
                         textStyle = TextStyle(fontFamily = PlexSans, fontSize = 16.sp, lineHeight = 22.sp, color = c.text),
@@ -350,28 +446,66 @@ private fun AssistSheet(
                         keyboardActions = KeyboardActions(onSend = { if (text.isNotBlank()) submit() }),
                     )
                 }
-                MicOrSend(
-                    send = text.isNotBlank(),
-                    onSend = { submit() },
-                    onVoice = { onVoice(target)?.let { notice = it } },
-                )
+                if (showVoice) {
+                    VoiceOrb(voiceState, voice::stop, size = 40.dp)
+                } else {
+                    MicOrSend(
+                        send = text.isNotBlank(),
+                        onSend = { submit() },
+                        onVoice = {
+                            inputChosen = true
+                            onVoice(target)?.let { notice = it }
+                        },
+                    )
+                }
             }
         }
     }
+}
+
+/** The system can hide the session before Compose disposes its view. Drop microphone callbacks at hide. */
+@Composable
+private fun rememberSheetRecognizer(
+    lifecycle: Lifecycle,
+    onText: (String) -> Unit,
+    onInterrupted: (String) -> Unit,
+): VoiceRecognizer {
+    val context = LocalContext.current
+    val latestText by rememberUpdatedState(onText)
+    val latestInterrupted by rememberUpdatedState(onInterrupted)
+    val voice = remember(context) {
+        VoiceRecognizer(
+            context,
+            onText = { latestText(it) },
+            onPartial = {},
+            onInterrupted = { latestInterrupted(it) },
+            onAudioActivity = {},
+        )
+    }
+    DisposableEffect(lifecycle, voice) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) voice.cancel()
+        }
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            voice.destroy()
+        }
+    }
+    return voice
 }
 
 /** The sheet floats over another app: a neutral shadow, never a coloured glow. */
 private val SheetShadow = androidx.compose.ui.graphics.Color(0x2E14161A)
 
 /**
- * The suggestions for the screen under the sheet, or none: when "측면 버튼 길게 누르기" is the plain input, a run is
- * in progress, the accessibility service is off, nobody is signed in, the plan is paused after a usage limit, or the
+ * Suggestions for the screen under the sheet, or none when a run is in progress,
+ * the accessibility service is off, nobody is signed in, the plan is paused after a usage limit, or the
  * light model call fails or takes over 4 seconds. Only the screen's text goes to the model (never a screenshot).
  */
 private suspend fun loadSuggestions(): AssistSuggestions {
     val none = AssistSuggestions.NONE
     return try {
-        if (AppGraph.settings.assistAction.first() != AssistAction.SUGGEST) return none
         if (AppGraph.runner.running.value) return none
         val service = PhoneUseAccessibilityService.instance ?: return none
         // The tree read and sign-in count toward the same 4 s budget as the model call.

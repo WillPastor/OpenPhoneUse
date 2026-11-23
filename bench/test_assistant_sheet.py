@@ -1,10 +1,18 @@
 """Check assistant startup twice on an unlocked test device with OpenPhoneUse as its assistant.
 
-Use the plain input path (e.g. "Talk right away" or accessibility off). Start from Home.
-Set ANDROID_SERIAL to select a device and ADB if adb is outside PATH, then run:
+Start from Home. Set ANDROID_SERIAL to select a device and ADB if adb is outside PATH.
+For the plain input test, select "Talk right away" on a device with microphone permission
+denied, accessibility off, or no in-app speech provider:
 
     python bench/test_assistant_sheet.py
+
+For the voice test, use a quiet test device with an in-app speech provider, microphone
+permission and accessibility enabled. Map a long power-button press to the digital assistant
+and use the default voice mode or select "Talk right away":
+
+    python bench/test_assistant_sheet.py --voice
 """
+import argparse
 import os
 import re
 import subprocess
@@ -36,7 +44,10 @@ def bounds(node):
     return tuple(map(int, match.groups())) if match else (0, 0, 0, 0)
 
 
-def editor_matches(tree, text):
+def editor_matches(text):
+    tree = hierarchy()
+    if tree is None:
+        return False
     root = tree.find("node")
     if root is None:
         return False
@@ -49,35 +60,54 @@ def editor_matches(tree, text):
     return False
 
 
-def wait_for(predicate, failure):
-    deadline = time.monotonic() + 12
+def recording():
+    output = shell("cmd", "appops", "get", PACKAGE, "RECORD_AUDIO")
+    return any("RECORD_AUDIO:" in line and "(running)" in line for line in output.splitlines())
+
+
+def dismissed():
+    focus = shell("dumpsys window | grep 'mCurrentFocus=' || true")
+    return "Window{" in focus and "VoiceInteractionSession" not in focus
+
+
+def wait_for(predicate, failure, timeout=12):
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        tree = hierarchy()
-        if tree is not None and predicate(tree):
+        if predicate():
             return
         time.sleep(0.2)
     raise RuntimeError(failure)
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--voice", action="store_true", help="check automatic listening and microphone release")
+    voice = parser.parse_args().voice
     service = shell("settings", "get", "secure", "voice_interaction_service")
     if service.split("/")[0] != PACKAGE:
         raise RuntimeError("Select OpenPhoneUse as the test device's default assistant first.")
 
     for session in (1, 2):
+        if voice and recording():
+            raise RuntimeError("OpenPhoneUse is already recording before the shortcut was pressed.")
         try:
-            shell("input", "keyevent", "KEYCODE_ASSIST")
-            wait_for(lambda tree: editor_matches(tree, ""),
-                     f"Session {session}: an empty, focused assistant editor did not appear on screen.")
-            sample = f"sheetcheck{session}"
-            shell("input", "text", sample)
-            wait_for(lambda tree: editor_matches(tree, sample),
-                     f"Session {session}: the assistant editor did not receive the text.")
+            if voice:
+                shell("input", "keyevent", "--duration", "900", "KEYCODE_POWER")
+                wait_for(recording, f"Session {session}: the side button did not start microphone recording.")
+            else:
+                shell("input", "keyevent", "KEYCODE_ASSIST")
+                wait_for(lambda: editor_matches(""),
+                         f"Session {session}: an empty, focused assistant editor did not appear on screen.")
+                sample = f"sheetcheck{session}"
+                shell("input", "text", sample)
+                wait_for(lambda: editor_matches(sample),
+                         f"Session {session}: the assistant editor did not receive the text.")
         finally:
             shell("input", "keyevent", "KEYCODE_HOME")
-        wait_for(lambda tree: tree.find(f".//node[@package='{PACKAGE}']") is None,
-                 f"Session {session}: the assistant sheet did not dismiss.")
-        print(f"Session {session} opened, accepted text without a tap, and dismissed.")
+        if voice:
+            wait_for(lambda: not recording(), "The microphone stayed active after Home.", timeout=2)
+        wait_for(dismissed, f"Session {session}: Home did not take focus from the assistant sheet.")
+        print(f"Session {session} passed.")
 
 
 if __name__ == "__main__":
