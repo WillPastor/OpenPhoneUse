@@ -160,9 +160,11 @@ class PhoneUseSession(context: Context) : VoiceInteractionSession(context) {
             clearFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
             setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            // The sheet pads for the navigation bar itself and does nothing for the keyboard. The system pans a
-            // session window so that the focused field stays above the keyboard, whichever soft input mode the
-            // window requests. Padding or fitting the window for the keyboard as well moves the sheet twice.
+            // The sheet pads for the navigation bar itself and leaves the keyboard to the system, which pans the
+            // window until the focused field is above the keyboard. Android 16 pans a session window whichever
+            // soft input mode it requests; asking for it states what the layout depends on for every version.
+            // Padding or fitting the window for the keyboard as well moves the sheet twice.
+            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN)
             setDecorFitsSystemWindows(false)
         }
     }
@@ -530,7 +532,10 @@ private val SheetMargin = 8.dp
 private val CardBottomPadding = 12.dp
 private val InputRowPadding = 4.dp
 
-/** Everything that lies under the editor, down to the bottom of the sheet's margin. */
+/**
+ * Everything that lies under the editor, down to the bottom of the sheet's margin: the three values above. Anything
+ * else put under the editor has to be added here too, or the keyboard covers the bottom of the sheet.
+ */
 private val BelowEditor = InputRowPadding + CardBottomPadding + SheetMargin
 
 /**
@@ -539,6 +544,9 @@ private val BelowEditor = InputRowPadding + CardBottomPadding + SheetMargin
  * text and leave the rest of the sheet behind the keyboard. So the field's bounds reach [below] further down, to the
  * bottom of the sheet's margin, and a request to keep part of the field in view asks for all of it. The row is told
  * the field's usual height.
+ *
+ * The field is therefore laid out [below] taller than it looks. Its decoration box pads the same amount back, so the
+ * text does not move, but the accessibility focus outline reaches that far under the row.
  */
 private fun Modifier.liftsSheetAboveKeyboard(below: Dp): Modifier = this
     .layout { measurable, constraints ->
