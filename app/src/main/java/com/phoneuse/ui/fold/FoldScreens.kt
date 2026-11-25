@@ -58,6 +58,7 @@ import com.phoneuse.ui.chat.AgentDot
 import com.phoneuse.ui.theme.PuIcons
 import com.phoneuse.ui.theme.pu
 import com.phoneuse.ui.theme.IconBtn
+import com.phoneuse.ui.voice.InterruptOnPause
 import com.phoneuse.ui.voice.VoiceCaption
 import com.phoneuse.ui.voice.VoiceOrb
 import com.phoneuse.ui.voice.rememberVoiceInput
@@ -210,6 +211,8 @@ fun FlexScreen(
                 } else {
                     // The same in-app voice input as the chat composer: the circle listens in place.
                     val voice = rememberVoiceInput(onVoice)
+                    // What it hears is sent without a tap, so it must not go on listening once this screen is left.
+                    InterruptOnPause(voice)
                     VoiceOrb(voice.state, voice::toggle)
                     VoiceCaption(
                         voice.state,

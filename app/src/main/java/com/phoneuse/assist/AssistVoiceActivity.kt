@@ -125,6 +125,15 @@ class AssistVoiceActivity : ComponentActivity() {
         }
     }
 
+    /** The screen turned off, or another app came in front: the microphone must not stay open there either. */
+    override fun onStop() {
+        super.onStop()
+        if (!isChangingConfigurations && !externalUi) {
+            interrupt()
+            finish()
+        }
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putString(STATE_PARTIAL, partial)

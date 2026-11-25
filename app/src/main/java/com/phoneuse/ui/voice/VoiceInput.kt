@@ -211,16 +211,25 @@ fun rememberVoiceInput(
 @Composable
 fun rememberDraftVoiceInput(onAppendSpeech: (String) -> Unit, enabled: Boolean = true): VoiceInput {
     val voice = rememberVoiceInput(onText = onAppendSpeech, onInterrupted = onAppendSpeech, canStart = { enabled })
+    // Preserve recognised words before the activity saves its draft, including on rotation.
+    InterruptOnPause(voice)
+    return voice
+}
+
+/**
+ * Closes [voice] when its activity is paused (Home, the screen turning off, a rotation), so the mic is not left
+ * open on a screen nobody is looking at. Words already heard go to the input's `onInterrupted`.
+ */
+@Composable
+fun InterruptOnPause(voice: VoiceInput) {
     val lifecycle = (LocalActivity.current as? LifecycleOwner)?.lifecycle
     DisposableEffect(voice, lifecycle) {
-        // Preserve recognised words before the activity saves its draft, including on rotation.
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE) voice.interrupt()
         }
         lifecycle?.addObserver(observer)
         onDispose { lifecycle?.removeObserver(observer) }
     }
-    return voice
 }
 
 private fun dialogIntent(language: String): Intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
