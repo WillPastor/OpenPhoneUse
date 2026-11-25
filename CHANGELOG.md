@@ -4,6 +4,7 @@ All notable changes to OpenPhoneUse are listed here, newest first. The format fo
 
 ## [Unreleased]
 
+- The in-app microphone waits 6 seconds for your first word and through a pause, instead of stopping after a second or two. What you say before and after a pause becomes one message. Choose 3, 6 or 10 seconds under **Settings → Display and voice → Dictation wait time**. **Done** and **Cancel** end the wait at once. (#25)
 - In a batch, the step right after a two-finger rotation or swipe checks screen capture again even when the screen looks unchanged, and a two-finger gesture makes one capture check before it starts instead of two.
 
 ## [0.0.8] - 2026-11-23

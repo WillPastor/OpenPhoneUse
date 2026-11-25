@@ -26,6 +26,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import com.phoneuse.app.AppGraph
+import com.phoneuse.app.dictationWaitNow
 import com.phoneuse.app.voiceLanguageNow
 import com.phoneuse.i18n.tr
 import com.phoneuse.voice.VoiceEngine
@@ -34,6 +35,7 @@ import com.phoneuse.voice.VoicePhase
 import com.phoneuse.voice.VoiceRecognizer
 import com.phoneuse.voice.VoiceState
 import com.phoneuse.voice.speechLanguageTag
+import com.phoneuse.voice.withDictationWait
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -52,7 +54,7 @@ class VoiceInput internal constructor(
     stateHolder: State<VoiceState>,
     private val begin: () -> Unit,
     private val ended: () -> Unit,
-    /** Drops a start still waiting for the dictation language; true when there was one. */
+    /** Drops a start still waiting for the dictation settings; true when there was one. */
     private val cancelPending: () -> Boolean = { false },
 ) {
     val state: VoiceState by stateHolder
@@ -134,7 +136,7 @@ fun rememberVoiceInput(
         if (text != null) latestText(text) else latestEnd()
     }
     val scope = rememberCoroutineScope()
-    // The start that is still resolving the dictation language; a stop or cancel meanwhile drops it.
+    // The start that is still reading the dictation language and wait; a stop or cancel meanwhile drops it.
     val pending = remember { arrayOfNulls<Job>(1) }
     val cancelPending = {
         val job = pending[0]
@@ -147,19 +149,20 @@ fun rememberVoiceInput(
         pending[0]?.cancel()
         pending[0] = scope.launch {
             val language = speechLanguageTag(AppGraph.voiceLanguageNow(), Locale.getDefault())
+            val wait = AppGraph.dictationWaitNow()
             pending[0] = null
-            // A permission dialog or language read can outlive its input or its dock session.
+            // A permission dialog or settings read can outlive its input or its dock session.
             if (!latestCanStart()) return@launch
             if (recognizer.engine == VoiceEngine.Dialog) {
                 try {
                     latestExternalUi(true)
-                    dialog.launch(dialogIntent(language))
+                    dialog.launch(dialogIntent(language).withDictationWait(wait))
                 } catch (e: RuntimeException) {
                     latestExternalUi(false)
                     recognizer.fail(VoiceError.UNAVAILABLE)
                 }
             } else {
-                recognizer.start(language)
+                recognizer.start(language, wait)
             }
         }
     }

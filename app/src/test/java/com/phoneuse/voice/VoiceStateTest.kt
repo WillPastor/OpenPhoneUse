@@ -144,4 +144,13 @@ class VoiceStateTest {
         assertEquals(VoiceLanguage.SYSTEM, voiceLanguageNow(null, read = { throw java.io.IOException() }))
         assertEquals(VoiceLanguage.SYSTEM, voiceLanguageNow(null, read = { delay(5_000); VoiceLanguage.KOREAN }, timeoutMs = 100))
     }
+
+    @Test fun savedDictationWaitIsReadAtStart() = runTest {
+        assertEquals(10, dictationWaitNow(read = { 10 }))
+    }
+
+    @Test fun unreadableOrSlowSettingsUseTheDefaultDictationWait() = runTest {
+        assertEquals(6, dictationWaitNow(read = { throw java.io.IOException() }))
+        assertEquals(6, dictationWaitNow(read = { delay(5_000); 10 }, timeoutMs = 100))
+    }
 }

@@ -141,6 +141,18 @@ suspend fun voiceLanguageNow(
     }
 }
 
+/**
+ * The dictation wait to start with, in seconds: the saved choice read now ([read]); the default when that
+ * fails or takes longer than [timeoutMs].
+ */
+suspend fun dictationWaitNow(read: suspend () -> Int, timeoutMs: Long = VOICE_READ_MS): Int = try {
+    withTimeoutOrNull(timeoutMs) { read() } ?: SettingsStore.DEFAULT_DICTATION_WAIT_SECONDS
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    SettingsStore.DEFAULT_DICTATION_WAIT_SECONDS
+}
+
 /** Which recognizer runs the in-app mic. */
 sealed interface VoiceEngine {
     /** A RecognitionService named explicitly (normally Google's), run without its dialog. */

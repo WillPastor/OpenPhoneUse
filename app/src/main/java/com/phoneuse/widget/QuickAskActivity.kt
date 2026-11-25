@@ -56,6 +56,7 @@ import androidx.lifecycle.lifecycleScope
 import com.phoneuse.app.AppGraph
 import com.phoneuse.app.ThemeMode
 import com.phoneuse.app.VoiceLanguage
+import com.phoneuse.app.dictationWaitNow
 import com.phoneuse.app.voiceLanguageNow
 import com.phoneuse.i18n.tr
 import com.phoneuse.memory.MemoryKind
@@ -67,6 +68,7 @@ import com.phoneuse.ui.theme.PuIcons
 import com.phoneuse.ui.theme.SendCircle
 import com.phoneuse.ui.theme.isDark
 import com.phoneuse.ui.theme.pu
+import com.phoneuse.voice.withDictationWait
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -115,13 +117,14 @@ class QuickAskActivity : ComponentActivity() {
     }
 
     private fun listen() {
-        lifecycleScope.launch { launchSpeech(AppGraph.voiceLanguageNow()) }
+        lifecycleScope.launch { launchSpeech(AppGraph.voiceLanguageNow(), AppGraph.dictationWaitNow()) }
     }
 
-    private fun launchSpeech(language: VoiceLanguage) {
+    private fun launchSpeech(language: VoiceLanguage, waitSeconds: Int) {
         val speech = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             .putExtra(RecognizerIntent.EXTRA_PROMPT, tr("Speak now", "말해 주세요"))
+            .withDictationWait(waitSeconds)
             .apply {
                 language.tag?.let {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, it)
