@@ -10,18 +10,19 @@ import android.speech.SpeechRecognizer
 import android.util.Log
 
 /**
- * Runs one [DictationFlow] on Android's [recognizer]: the mic stays open across the service's own endings until
- * the user has been quiet for [waitSeconds]. [listener] hears it as a single session. The recognizer is not
- * destroyed here, so the next session can use it again.
+ * Runs one [DictationFlow] on Android's [recognizer]: the mic stays open across the service's own endings for
+ * [waitSeconds] before the first words and [pauseSeconds] after the last ones. [listener] hears it as a single
+ * session. The recognizer is not destroyed here, so the next session can use it again.
  */
 internal class DictationSession(
     private val recognizer: SpeechRecognizer,
     private val request: Intent,
     waitSeconds: Int,
+    pauseSeconds: Int,
     private val listener: RecognitionListener,
 ) {
     private val timer = Handler(Looper.getMainLooper())
-    private val flow = DictationFlow(waitSeconds * 1_000L, Host())
+    private val flow = DictationFlow(waitSeconds * 1_000L, Host(), pauseSeconds * 1_000L)
 
     fun listen() = flow.listen()
 

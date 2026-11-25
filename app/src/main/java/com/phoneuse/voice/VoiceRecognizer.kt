@@ -46,10 +46,15 @@ class VoiceRecognizer(
     val engine: VoiceEngine by lazy { detectEngine(context) }
 
     /**
-     * Opens the mic. It stays open until the user has been quiet for [waitSeconds], however early the
-     * recognition service ends an utterance.
+     * Opens the mic. It waits [waitSeconds] for the first words and [pauseSeconds] after the last ones, however
+     * early the recognition service ends an utterance. A screen that sends what it hears without a tap passes
+     * [SERVICE_PAUSE]: it then ends when the service does, a second or two after the last word.
      */
-    fun start(languageTag: String, waitSeconds: Int = SettingsStore.DEFAULT_DICTATION_WAIT_SECONDS) {
+    fun start(
+        languageTag: String,
+        waitSeconds: Int = SettingsStore.DEFAULT_DICTATION_WAIT_SECONDS,
+        pauseSeconds: Int = waitSeconds,
+    ) {
         val engine = engine
         if (engine == VoiceEngine.Dialog) {
             emit(VoiceEvent.Failed(VoiceError.UNAVAILABLE))
@@ -71,9 +76,10 @@ class VoiceRecognizer(
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, languageTag)
             .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
-            .withDictationWait(waitSeconds)
+        // The hints ask the service to sit through a pause, so they are left out when it should end on its own.
+        if (pauseSeconds > SERVICE_PAUSE) intent.withDictationWait(pauseSeconds)
         // A start that fails is reported through the listener, like any other recognizer error.
-        val started = DictationSession(r, intent, waitSeconds, Listener(id))
+        val started = DictationSession(r, intent, waitSeconds, pauseSeconds, Listener(id))
         dictation = started
         started.listen()
     }
@@ -235,6 +241,9 @@ class VoiceRecognizer(
 
         /** How long to wait after speech ends before using the latest partial. */
         const val FINAL_WAIT_MS = 4_000L
+
+        /** A pause of zero seconds: the recognition service decides when the speaker has finished. */
+        const val SERVICE_PAUSE = 0
 
         fun detectEngine(context: Context): VoiceEngine {
             val services = runCatching {

@@ -452,7 +452,7 @@ fun SettingsScreen(
             Choice.VOICE -> ChoiceDialog(tr("Speak by voice", "음성으로 말하기"), VOICE_LABELS, voice, close) { v -> scope.launch { settings.setVoiceLanguage(v) } }
             Choice.DICTATION_WAIT -> ChoiceDialog(
                 tr("Dictation wait time", "받아쓰기 대기 시간"), DICTATION_WAIT_LABELS, dictationWait, close,
-                note = tr("How long the mic waits for your first word, and through a pause while you talk.", "마이크가 첫마디를 기다리고, 말하다 멈췄을 때 기다리는 시간이에요."),
+                note = tr("How long the mic waits for your first word. In the chat box and the floating panel it also waits this long through a pause.", "마이크가 첫마디를 기다리는 시간이에요. 채팅 입력창과 플로팅 패널에서는 말하다 멈췄을 때도 이만큼 기다려요."),
             ) { seconds -> scope.launch { settings.setDictationWaitSeconds(seconds) } }
             Choice.SCREEN -> ChoiceDialog(
                 tr("Screen content sent to the model", "모델에 보내는 화면 내용"), SCREEN_LABELS, screenContent, close,

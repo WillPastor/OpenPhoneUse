@@ -210,7 +210,7 @@ fun FlexScreen(
                     }
                 } else {
                     // The same in-app voice input as the chat composer: the circle listens in place.
-                    val voice = rememberVoiceInput(onVoice)
+                    val voice = rememberVoiceInput(onVoice, sendsWithoutTap = true)
                     // What it hears is sent without a tap, so it must not go on listening once this screen is left.
                     InterruptOnPause(voice)
                     VoiceOrb(voice.state, voice::toggle)

@@ -51,6 +51,36 @@ class DictationWindowTest {
         assertEquals("first another phrase", window.text)
     }
 
+    @Test fun aShorterPauseAppliesOnlyAfterWords() {
+        val window = DictationWindow(6_000, pauseMs = 2_000, startedAt = 0)
+        window.ready(500)
+        assertEquals(6_000L, window.remaining(500))
+        window.partial("lights", 1_000)
+        window.endOfSpeech(1_800)
+        window.complete("lights", 1_900)
+        assertEquals(1_100L, window.remaining(1_900))
+    }
+
+    @Test fun wordsOfAFailedUtteranceAreDropped() {
+        val window = DictationWindow(6_000, startedAt = 0)
+        window.complete("note this", 1_000)
+        window.partial("and send", 2_000)
+        window.dropUnconfirmed()
+        assertEquals("note this", window.text)
+    }
+
+    @Test fun phrasesAreJoinedWithASpaceExceptInChineseAndJapanese() {
+        assertEquals("turn off the lights", joinPhrases("turn off", "the lights"))
+        assertEquals("불을 꺼 줘", joinPhrases("불을", "꺼 줘"))
+        assertEquals("電気を消して", joinPhrases("電気を", "消して"))
+        assertEquals("把灯关掉", joinPhrases("把灯", "关掉"))
+        assertEquals("カメラを開いて", joinPhrases("カメラを", "開いて"))
+        assertEquals("わかりました。OK", joinPhrases("わかりました。", "OK"))
+        assertEquals("Wi-Fiをオフ", joinPhrases("Wi-Fi", "をオフ"))
+        assertEquals("only", joinPhrases("", "only"))
+        assertEquals("only", joinPhrases("only", ""))
+    }
+
     @Test fun anEarlyPartialMustNotUseUpThePauseWhileTheUserIsStillSpeaking() {
         val window = DictationWindow(6_000, startedAt = 0)
         window.partial("please", 1_000)

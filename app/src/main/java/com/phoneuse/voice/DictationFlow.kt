@@ -6,11 +6,20 @@ package com.phoneuse.voice
  * in the request. So every ending inside the wait starts another utterance, and the words of all of them are
  * joined into one text by [DictationWindow], each said once.
  *
+ * The mic waits [waitMs] for the first words and [pauseMs] after the last ones. With a [pauseMs] of zero the
+ * service's own end of speech ends the session, which is what a screen that sends without a tap wants. However
+ * much is said, the session ends [maxMs] after the tap.
+ *
  * Done ([stop]) and Cancel ([close]) never wait out the rest of the pause.
  *
  * Plain JVM code. [Host] stands for the recognizer, the timer and the mic UI. Main thread only.
  */
-internal class DictationFlow(private val waitMs: Long, private val host: Host) {
+internal class DictationFlow(
+    waitMs: Long,
+    private val host: Host,
+    private val pauseMs: Long = waitMs,
+    private val maxMs: Long = MAX_SESSION_MS,
+) {
     interface Host {
         fun now(): Long
 
@@ -44,7 +53,10 @@ internal class DictationFlow(private val waitMs: Long, private val host: Host) {
         fun error(code: Int)
     }
 
-    private val window = DictationWindow(waitMs, host.now())
+    private val window = DictationWindow(waitMs, pauseMs, host.now())
+
+    /** When the session ends whatever is being said. Set by the first [listen]. */
+    private var limitAt = Long.MAX_VALUE
 
     /** The utterance whose callbacks count. Callbacks of older ones are ignored. */
     private var turn = 0
@@ -69,6 +81,10 @@ internal class DictationFlow(private val waitMs: Long, private val host: Host) {
         speaking = false
         ended = false
         startedAt = host.now()
+        if (id == 1) {
+            limitAt = startedAt + maxMs
+            host.after(maxMs, ::expire)
+        }
         if (!host.start(id)) error(id, ERROR_CLIENT)
     }
 
@@ -106,14 +122,14 @@ internal class DictationFlow(private val waitMs: Long, private val host: Host) {
         if (!hears(id) || stopping) return
         val now = host.now()
         window.ready(now)
-        if (!speaking && !ended) host.after(window.remaining(now), ::expire)
+        if (!speaking && !ended) host.after(remaining(now), ::expire)
         host.ready()
     }
 
     fun beginningOfSpeech(id: Int) {
         if (!hears(id) || stopping || ended) return
         speaking = true
-        host.clearTimer()
+        waitForTheLimitOnly()
         host.beginningOfSpeech()
     }
 
@@ -121,7 +137,7 @@ internal class DictationFlow(private val waitMs: Long, private val host: Host) {
         if (!hears(id) || words.isBlank()) return
         if (!ended && !stopping) {
             speaking = true
-            host.clearTimer()
+            waitForTheLimitOnly()
         }
         host.partial(window.partial(words, host.now()))
     }
@@ -132,7 +148,7 @@ internal class DictationFlow(private val waitMs: Long, private val host: Host) {
         val now = host.now()
         window.endOfSpeech(now)
         // The final is still to come, and can hold words the service never sent as partial text.
-        if (!stopping) host.after(if (speaking) waitMs else window.remaining(now), ::expire)
+        if (!stopping) host.after(if (speaking) minOf(pauseMs, untilLimit(now)) else remaining(now), ::expire)
     }
 
     fun results(id: Int, words: String?) {
@@ -146,18 +162,32 @@ internal class DictationFlow(private val waitMs: Long, private val host: Host) {
             kind == VoiceError.NO_MATCH -> complete(null)
             // The service was not ready for another utterance yet. Ask again while the wait lasts.
             kind == VoiceError.BUSY && turn > 1 -> complete(null)
+            // Words the service never confirmed must not end up in the text: a screen that sends without a tap
+            // would send a phrase cut off by the failure. With nothing confirmed either, it is a plain failure.
+            window.hasUnconfirmedWords && !window.hasConfirmedWords -> fail(code)
             // A later utterance failing must not lose the earlier ones, or turn a quiet ending into an error.
             turn > 1 || window.hasConfirmedWords -> {
                 open = false
+                window.dropUnconfirmed()
                 deliver()
             }
-            else -> {
-                open = false
-                close()
-                host.error(code)
-            }
+            else -> fail(code)
         }
     }
+
+    private fun fail(code: Int) {
+        open = false
+        close()
+        host.error(code)
+    }
+
+    /** What is left of the wait, and never more than what is left of the session. */
+    private fun remaining(now: Long): Long = minOf(window.remaining(now), untilLimit(now))
+
+    private fun untilLimit(now: Long): Long = (limitAt - now).coerceAtLeast(0L)
+
+    /** Words are being heard, so the wait does not run. The session's limit still does. */
+    private fun waitForTheLimitOnly() = host.after(untilLimit(host.now()), ::expire)
 
     /** The service returned utterance [turn], with [words] or with nothing. */
     private fun complete(words: String?) {
@@ -165,7 +195,7 @@ internal class DictationFlow(private val waitMs: Long, private val host: Host) {
         open = false
         host.clearTimer()
         window.complete(words, now)
-        val remaining = window.remaining(now)
+        val remaining = remaining(now)
         // Opening the mic again for the last moment of the wait would only start it and stop it.
         if (stopping || remaining <= RESTART_GAP_MS) {
             deliver()
@@ -178,7 +208,7 @@ internal class DictationFlow(private val waitMs: Long, private val host: Host) {
     }
 
     private fun continueListening() {
-        val remaining = window.remaining(host.now())
+        val remaining = remaining(host.now())
         if (remaining == 0L) {
             expire()
             return
@@ -187,7 +217,7 @@ internal class DictationFlow(private val waitMs: Long, private val host: Host) {
         listen()
     }
 
-    /** The user has been quiet for the whole wait. */
+    /** The user has been quiet for the whole wait, or the session has reached its limit. */
     private fun expire() {
         if (stopping || closed) return
         host.endOfSpeech()
@@ -203,6 +233,9 @@ internal class DictationFlow(private val waitMs: Long, private val host: Host) {
     companion object {
         /** The least time between two starts of the service. */
         const val RESTART_GAP_MS = 250L
+
+        /** The longest one tap keeps the mic open, however much is said. The same as VoiceBridge.MAX_WAIT_MS. */
+        const val MAX_SESSION_MS = 60_000L
 
         /** SpeechRecognizer.ERROR_CLIENT, kept literal so this stays plain JVM code. */
         private const val ERROR_CLIENT = 5

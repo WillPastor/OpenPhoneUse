@@ -53,6 +53,7 @@ class DictationFlowTest {
 
     private val noMatch = 7
     private val network = 2
+    private val audio = 3
     private val busy = 8
 
     /** Says [words] in utterance [turn]: heard at [at], and returned by the service one second later. */
@@ -237,6 +238,130 @@ class DictationFlowTest {
         flow.error(3, network)
         assertEquals("results:note this", host.ui.last())
         assertFalse(host.ui.any { it.startsWith("error") })
+    }
+
+    @Test fun aLaterFailureInMidPhraseDeliversOnlyTheConfirmedWords() {
+        flow.listen()
+        host.advanceTo(100)
+        flow.ready(1)
+        say(1, "note this", at = 500)
+        host.advanceTo(1_700)
+        flow.ready(2)
+
+        // A call comes in while the second phrase is being said. Its words were never confirmed.
+        host.advanceTo(2_500)
+        flow.beginningOfSpeech(2)
+        flow.partial(2, "and send it to")
+        assertEquals("partial:note this and send it to", host.ui.last())
+        host.advanceTo(2_800)
+        flow.error(2, audio)
+
+        assertEquals("results:note this", host.ui.last())
+        assertFalse(host.ui.any { it.startsWith("error") })
+        assertFalse(host.timerSet)
+    }
+
+    @Test fun aLaterFailureInMidPhraseWithNothingConfirmedIsAFailure() {
+        flow.listen()
+        host.advanceTo(100)
+        flow.ready(1)
+        // Silence, and the service gives up. The second utterance fails while the first words are being said.
+        host.advanceTo(3_000)
+        flow.error(1, noMatch)
+        host.advanceTo(3_300)
+        flow.ready(2)
+        host.advanceTo(4_000)
+        flow.partial(2, "send it to")
+        host.advanceTo(4_200)
+        flow.error(2, audio)
+
+        // Reported as a failure, so the half phrase goes to onInterrupted and is never sent as the text.
+        assertEquals("error:$audio", host.ui.last())
+        assertFalse(host.ui.any { it.startsWith("results") })
+        assertFalse(host.timerSet)
+    }
+
+    @Test fun oneTapEndsAtTheSessionLimitHoweverMuchIsSaid() {
+        flow.listen()
+        // Someone, or a television, keeps talking: a phrase every two seconds, each restarting the wait.
+        var turn = 1
+        var at = 500L
+        while (at < 58_000) {
+            flow.ready(turn)
+            say(turn, "more", at)
+            turn = host.starts
+            at += 2_000
+        }
+        flow.ready(turn)
+        host.advanceTo(59_000)
+        flow.beginningOfSpeech(turn)
+        flow.partial(turn, "and more")
+
+        host.advanceTo(59_999)
+        assertFalse("end" in host.ui)
+        host.advanceTo(DictationFlow.MAX_SESSION_MS)
+        assertEquals("end", host.ui.last())
+        assertEquals("stop", host.service.last())
+
+        // Only the words in flight are waited for, as with Done.
+        flow.results(turn, "and more")
+        assertTrue(host.ui.last().startsWith("results:more more"))
+        assertTrue(host.ui.last().endsWith("and more"))
+        host.advanceTo(120_000)
+        assertEquals(turn, host.starts)
+        assertEquals(1, host.ui.count { it.startsWith("results") })
+    }
+
+    @Test fun silenceCannotOutlastTheSessionLimit() {
+        val short = DictationFlow(6_000, host, maxMs = 4_000)
+        short.listen()
+        host.advanceTo(100)
+        short.ready(1)
+        host.advanceTo(3_999)
+        assertFalse("end" in host.ui)
+        host.advanceTo(4_000)
+        assertEquals(listOf("ready", "end", "results:"), host.ui)
+    }
+
+    @Test fun withNoPauseTheWaitCoversOnlyTheFirstWord() {
+        val handsFree = DictationFlow(6_000, host, pauseMs = 0)
+        handsFree.listen()
+        host.advanceTo(100)
+        handsFree.ready(1)
+        // The service gives up on the silence early. The mic is opened again, because nothing was said yet.
+        host.advanceTo(3_000)
+        handsFree.error(1, noMatch)
+        host.advanceTo(3_000)
+        assertEquals(2, host.starts)
+        host.advanceTo(3_200)
+        handsFree.ready(2)
+
+        host.advanceTo(5_000)
+        handsFree.beginningOfSpeech(2)
+        handsFree.partial(2, "what time is it")
+        // The service decides the speaker has finished. Nothing more is waited for, and the mic is not reopened.
+        host.advanceTo(6_400)
+        handsFree.endOfSpeech(2)
+        host.advanceTo(6_400)
+        assertEquals("end", host.ui.last())
+        host.advanceTo(6_500)
+        handsFree.results(2, "what time is it")
+
+        assertEquals("results:what time is it", host.ui.last())
+        host.advanceTo(60_000)
+        assertEquals(2, host.starts)
+        assertEquals(1, host.ui.count { it.startsWith("results") })
+    }
+
+    @Test fun withNoPauseSilenceStillLastsTheChosenWait() {
+        val handsFree = DictationFlow(6_000, host, pauseMs = 0)
+        handsFree.listen()
+        host.advanceTo(100)
+        handsFree.ready(1)
+        host.advanceTo(6_099)
+        assertFalse("end" in host.ui)
+        host.advanceTo(6_100)
+        assertEquals(listOf("ready", "end", "results:"), host.ui)
     }
 
     @Test fun aFailureWithNothingHeardIsReported() {

@@ -37,6 +37,8 @@ import com.phoneuse.voice.VoiceState
 import com.phoneuse.voice.speechLanguageTag
 import com.phoneuse.voice.withDictationWait
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -94,6 +96,10 @@ class VoiceInput internal constructor(
  * device without any usable recognizer. [onText] gets the recognised text. [onPartial] receives live
  * revisions. [onInterrupted] receives the last words when the recognizer fails or its host goes away.
  * [onEnd] reports cancellation, a dismissed dialog, or the end of an error message.
+ *
+ * [sendsWithoutTap] is for an input whose [onText] acts on the words at once. The saved dictation wait then
+ * applies only before the first word, and the recognizer's own end of speech ends the session, so the request
+ * goes out as soon as it did before the wait was configurable.
  */
 @Composable
 fun rememberVoiceInput(
@@ -104,6 +110,7 @@ fun rememberVoiceInput(
     onExternalUi: (Boolean) -> Unit = {},
     onAudioActivity: () -> Unit = {},
     canStart: () -> Boolean = { true },
+    sendsWithoutTap: Boolean = false,
 ): VoiceInput {
     val context = LocalContext.current
     val view = LocalView.current
@@ -148,21 +155,27 @@ fun rememberVoiceInput(
     val listen = {
         pending[0]?.cancel()
         pending[0] = scope.launch {
-            val language = speechLanguageTag(AppGraph.voiceLanguageNow(), Locale.getDefault())
-            val wait = AppGraph.dictationWaitNow()
+            // Read together: each has its own time limit, and one after the other a cold start could wait for both.
+            val (language, wait) = coroutineScope {
+                val savedLanguage = async { AppGraph.voiceLanguageNow() }
+                val savedWait = async { AppGraph.dictationWaitNow() }
+                speechLanguageTag(savedLanguage.await(), Locale.getDefault()) to savedWait.await()
+            }
+            val pause = if (sendsWithoutTap) VoiceRecognizer.SERVICE_PAUSE else wait
             pending[0] = null
             // A permission dialog or settings read can outlive its input or its dock session.
             if (!latestCanStart()) return@launch
             if (recognizer.engine == VoiceEngine.Dialog) {
                 try {
                     latestExternalUi(true)
-                    dialog.launch(dialogIntent(language).withDictationWait(wait))
+                    // The system dialog only takes hints, and they would hold back a request that sends itself.
+                    dialog.launch(dialogIntent(language).apply { if (!sendsWithoutTap) withDictationWait(wait) })
                 } catch (e: RuntimeException) {
                     latestExternalUi(false)
                     recognizer.fail(VoiceError.UNAVAILABLE)
                 }
             } else {
-                recognizer.start(language, wait)
+                recognizer.start(language, wait, pause)
             }
         }
     }
