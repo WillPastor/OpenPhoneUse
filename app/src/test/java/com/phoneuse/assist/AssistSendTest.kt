@@ -132,9 +132,10 @@ class AssistSendTest {
         inSheetRecognizer: Boolean = true,
         canStartTask: Boolean = true,
         keyguardLocked: Boolean = false,
+        screenOn: Boolean = true,
         touchExploration: Boolean = false,
     ) = shouldListenOnOpen(
-        action, openedBySystem, micGranted, inSheetRecognizer, canStartTask, keyguardLocked, touchExploration,
+        action, openedBySystem, micGranted, inSheetRecognizer, canStartTask, keyguardLocked, screenOn, touchExploration,
     )
 
     @Test
@@ -148,6 +149,8 @@ class AssistSendTest {
     @Test
     fun listeningOnOpenWaitsForATapWhereSpeakingIsUnsafeOrImpossible() {
         assertFalse(listensOnOpen(keyguardLocked = true))
+        // The screen went dark between the long press and the moment the microphone would open.
+        assertFalse(listensOnOpen(screenOn = false))
         assertFalse(listensOnOpen(touchExploration = true))
         assertFalse(listensOnOpen(micGranted = false))
         assertFalse(listensOnOpen(inSheetRecognizer = false))

@@ -3,12 +3,15 @@ package com.phoneuse.assist
 import com.phoneuse.i18n.tr
 import android.Manifest
 import android.app.KeyguardManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.service.voice.VoiceInteractionSession
 import android.view.View
@@ -87,6 +90,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.setViewTreeLifecycleOwner
@@ -210,9 +214,13 @@ class PhoneUseSession(context: Context) : VoiceInteractionSession(context) {
         owner.pause()
     }
 
-    /** Checked on open and again just before the microphone starts. An unreadable lock state counts as locked. */
+    /**
+     * Checked on open and again just before the microphone starts. An unreadable lock state counts as locked, and an
+     * unreadable screen state as off.
+     */
     private fun canListenOnOpen(action: AssistAction?, inSheetRecognizer: Boolean): Boolean {
         val keyguard = context.getSystemService(KeyguardManager::class.java)
+        val power = context.getSystemService(PowerManager::class.java)
         val accessibility = context.getSystemService(AccessibilityManager::class.java)
         val microphone = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO)
         return shouldListenOnOpen(
@@ -222,6 +230,7 @@ class PhoneUseSession(context: Context) : VoiceInteractionSession(context) {
             inSheetRecognizer = inSheetRecognizer,
             canStartTask = AssistSession.currentBlocker() == null,
             keyguardLocked = keyguard?.isKeyguardLocked != false,
+            screenOn = power?.isInteractive == true,
             touchExploration = accessibility?.isTouchExplorationEnabled == true,
         )
     }
@@ -492,7 +501,10 @@ private fun AssistSheet(
     }
 }
 
-/** The system can hide the session before Compose disposes its view. Drop microphone callbacks at hide. */
+/**
+ * The system can hide the session before Compose disposes its view. Drop microphone callbacks at hide. When the screen
+ * turns off the session stays up, so listening is interrupted there instead: the words heard so far go to the editor.
+ */
 @Composable
 private fun rememberSheetRecognizer(
     lifecycle: Lifecycle,
@@ -516,8 +528,18 @@ private fun rememberSheetRecognizer(
             if (event == Lifecycle.Event.ON_PAUSE) voice.cancel()
         }
         lifecycle.addObserver(observer)
+        // Nothing hides the session when the screen turns off, so without this the microphone would stay open and
+        // send what it heard from a dark phone.
+        val screenOff = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, intent: Intent) {
+                if (voice.state.value.active) voice.interrupt()
+            }
+        }
+        // A system broadcast only; nothing else may send it to the app.
+        ContextCompat.registerReceiver(context, screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF), ContextCompat.RECEIVER_NOT_EXPORTED)
         onDispose {
             lifecycle.removeObserver(observer)
+            runCatching { context.unregisterReceiver(screenOff) }
             voice.destroy()
         }
     }
