@@ -364,6 +364,78 @@ class DictationFlowTest {
         assertEquals(listOf("ready", "end", "results:"), host.ui)
     }
 
+    @Test fun withNoPauseACoughBeforeTheFirstWordDoesNotEndTheSession() {
+        val handsFree = DictationFlow(6_000, host, pauseMs = 0)
+        handsFree.listen()
+        host.advanceTo(100)
+        handsFree.ready(1)
+        // The service hears a sound begin and end, and finds no words in it.
+        host.advanceTo(1_000)
+        handsFree.beginningOfSpeech(1)
+        host.advanceTo(1_400)
+        handsFree.endOfSpeech(1)
+        host.advanceTo(1_600)
+        handsFree.error(1, noMatch)
+        host.advanceTo(1_600)
+
+        // No "didn't catch that": the mic is opened again for what is left of the wait for the first words.
+        assertEquals(listOf("ready", "speech"), host.ui)
+        assertEquals(2, host.starts)
+        host.advanceTo(1_800)
+        handsFree.ready(2)
+
+        // That wait began when the mic first opened, at 100. The cough did not start it again.
+        host.advanceTo(6_099)
+        assertFalse("end" in host.ui)
+        host.advanceTo(6_100)
+        assertEquals(listOf("ready", "speech", "ready", "end", "results:"), host.ui)
+    }
+
+    @Test fun withNoPauseWordsTheServiceSentOnlyAsAFinalAreSentAtOnce() {
+        val handsFree = DictationFlow(6_000, host, pauseMs = 0)
+        handsFree.listen()
+        host.advanceTo(100)
+        handsFree.ready(1)
+        // No partial text from this service, so until its final a phrase looks the same as a cough.
+        host.advanceTo(1_000)
+        handsFree.beginningOfSpeech(1)
+        host.advanceTo(2_400)
+        handsFree.endOfSpeech(1)
+        host.advanceTo(2_500)
+        handsFree.results(1, "what time is it")
+
+        // Nothing waits for the rest of the six seconds.
+        assertEquals("results:what time is it", host.ui.last())
+        assertFalse(host.timerSet)
+        host.advanceTo(60_000)
+        assertEquals(1, host.starts)
+        assertEquals(1, host.ui.count { it.startsWith("results") })
+    }
+
+    @Test fun wordsTheServiceSentOnlyAsAFinalStillGetThePause() {
+        flow.listen()
+        host.advanceTo(100)
+        flow.ready(1)
+        // No partial text again, and the phrase ends after the six seconds for the first words have passed.
+        host.advanceTo(5_000)
+        flow.beginningOfSpeech(1)
+        host.advanceTo(7_400)
+        flow.endOfSpeech(1)
+        host.advanceTo(7_500)
+        flow.results(1, "note this")
+        host.advanceTo(7_500)
+
+        // The mic is opened again, and stays open until six seconds after the phrase ended.
+        assertEquals("partial:note this", host.ui.last())
+        assertEquals(2, host.starts)
+        host.advanceTo(7_700)
+        flow.ready(2)
+        host.advanceTo(13_399)
+        assertFalse("end" in host.ui)
+        host.advanceTo(13_400)
+        assertEquals(listOf("end", "results:note this"), host.ui.takeLast(2))
+    }
+
     @Test fun aFailureWithNothingHeardIsReported() {
         flow.listen()
         host.advanceTo(100)

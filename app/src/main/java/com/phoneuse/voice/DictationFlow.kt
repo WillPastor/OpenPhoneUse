@@ -7,8 +7,9 @@ package com.phoneuse.voice
  * joined into one text by [DictationWindow], each said once.
  *
  * The mic waits [waitMs] for the first words and [pauseMs] after the last ones. With a [pauseMs] of zero the
- * service's own end of speech ends the session, which is what a screen that sends without a tap wants. However
- * much is said, the session ends [maxMs] after the tap.
+ * service's own end of speech ends the session, which is what a screen that sends without a tap wants. A sound
+ * with no words in it, such as a cough, does not end the wait for the first words. However much is said, the
+ * session ends [maxMs] after the tap.
  *
  * Done ([stop]) and Cancel ([close]) never wait out the rest of the pause.
  *
@@ -65,7 +66,7 @@ internal class DictationFlow(
     private var open = false
     private var startedAt = 0L
 
-    /** Words have been heard in [turn]. */
+    /** The service has heard speech begin in [turn]: words, or a sound it may yet find no words in. */
     private var speaking = false
 
     /** The service has stopped listening to [turn]. */
@@ -147,8 +148,19 @@ internal class DictationFlow(
         ended = true
         val now = host.now()
         window.endOfSpeech(now)
-        // The final is still to come, and can hold words the service never sent as partial text.
-        if (!stopping) host.after(if (speaking) minOf(pauseMs, untilLimit(now)) else remaining(now), ::expire)
+        if (stopping) return
+        val pause = minOf(pauseMs, untilLimit(now))
+        host.after(
+            when {
+                // Words are in flight, so only the pause after them is left to wait.
+                window.hasUnconfirmedWords -> pause
+                // A sound, and no words yet. The final decides: with words the service never sent as partial text
+                // the pause applies, and with none it was a cough, which must not end the wait for the first words.
+                speaking -> maxOf(pause, remaining(now))
+                else -> remaining(now)
+            },
+            ::expire,
+        )
     }
 
     fun results(id: Int, words: String?) {
