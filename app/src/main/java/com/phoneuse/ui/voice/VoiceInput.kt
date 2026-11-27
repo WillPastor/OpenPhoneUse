@@ -35,7 +35,6 @@ import com.phoneuse.voice.VoicePhase
 import com.phoneuse.voice.VoiceRecognizer
 import com.phoneuse.voice.VoiceState
 import com.phoneuse.voice.speechLanguageTag
-import com.phoneuse.voice.withDictationWait
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -168,8 +167,8 @@ fun rememberVoiceInput(
             if (recognizer.engine == VoiceEngine.Dialog) {
                 try {
                     latestExternalUi(true)
-                    // The system dialog only takes hints, and they would hold back a request that sends itself.
-                    dialog.launch(dialogIntent(language).apply { if (!sendsWithoutTap) withDictationWait(wait) })
+                    // The system dialog decides by itself when the speaker has finished, as it did before.
+                    dialog.launch(dialogIntent(language))
                 } catch (e: RuntimeException) {
                     latestExternalUi(false)
                     recognizer.fail(VoiceError.UNAVAILABLE)

@@ -76,10 +76,12 @@ class VoiceRecognizer(
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, languageTag)
             .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
-        // The hints ask the service to sit through a pause, so they are left out when it should end on its own.
-        if (pauseSeconds > SERVICE_PAUSE) intent.withDictationWait(pauseSeconds)
+        // A draft input asks the service to listen on through pauses. No other request carries a length or a
+        // silence extra: without a segmented session they put Google's service into a mode whose final is empty.
+        val segmented = asksForSegments(Build.VERSION.SDK_INT, pauseSeconds, engine)
+        if (segmented) intent.withSegmentedSession()
         // A start that fails is reported through the listener, like any other recognizer error.
-        val started = DictationSession(r, intent, waitSeconds, pauseSeconds, Listener(id))
+        val started = DictationSession(r, intent, waitSeconds, pauseSeconds, segmented, Listener(id))
         dictation = started
         started.listen()
     }

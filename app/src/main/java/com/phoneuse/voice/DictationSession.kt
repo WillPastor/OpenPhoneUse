@@ -11,18 +11,20 @@ import android.util.Log
 
 /**
  * Runs one [DictationFlow] on Android's [recognizer]: the mic stays open across the service's own endings for
- * [waitSeconds] before the first words and [pauseSeconds] after the last ones. [listener] hears it as a single
- * session. The recognizer is not destroyed here, so the next session can use it again.
+ * [waitSeconds] before the first words and [pauseSeconds] after the last ones. [segmented] says that [request]
+ * asks the service to listen on through pauses. [listener] hears it as a single session. The recognizer is not
+ * destroyed here, so the next session can use it again.
  */
 internal class DictationSession(
     private val recognizer: SpeechRecognizer,
     private val request: Intent,
     waitSeconds: Int,
     pauseSeconds: Int,
+    segmented: Boolean,
     private val listener: RecognitionListener,
 ) {
     private val timer = Handler(Looper.getMainLooper())
-    private val flow = DictationFlow(waitSeconds * 1_000L, Host(), pauseSeconds * 1_000L)
+    private val flow = DictationFlow(waitSeconds * 1_000L, Host(), pauseSeconds * 1_000L, segmented = segmented)
 
     fun listen() = flow.listen()
 
@@ -83,6 +85,10 @@ internal class DictationSession(
         override fun onPartialResults(partialResults: Bundle?) {
             best(partialResults)?.let { flow.partial(turn, it) }
         }
+        override fun onSegmentResults(segmentResults: Bundle) {
+            best(segmentResults)?.let { flow.segment(turn, it) }
+        }
+        override fun onEndOfSegmentedSession() = flow.endOfSegments(turn)
         override fun onEvent(eventType: Int, params: Bundle?) = Unit
     }
 

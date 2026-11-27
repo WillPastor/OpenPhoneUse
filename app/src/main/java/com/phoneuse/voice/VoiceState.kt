@@ -165,6 +165,14 @@ sealed interface VoiceEngine {
     data object Dialog : VoiceEngine
 }
 
+/**
+ * True when a start asks the recognition service for a segmented session: one utterance kept open through pauses,
+ * with each phrase returned as it is finished. Only an input that waits through a pause wants one ([pauseSeconds]
+ * above zero), the request exists from Android 13 ([sdk] 33), and only Google's services are known to answer it.
+ */
+fun asksForSegments(sdk: Int, pauseSeconds: Int, engine: VoiceEngine): Boolean =
+    sdk >= 33 && pauseSeconds > 0 && engine is VoiceEngine.Service && engine.packageName in PREFERRED_RECOGNIZERS
+
 /** Google's recognizers, best first: the Google app, then Speech Services by Google. */
 val PREFERRED_RECOGNIZERS = listOf("com.google.android.googlequicksearchbox", "com.google.android.tts")
 

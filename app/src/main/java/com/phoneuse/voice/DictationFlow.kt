@@ -2,9 +2,14 @@ package com.phoneuse.voice
 
 /**
  * One tap of the in-app mic, kept open until the user has been quiet for the chosen wait. A recognition service
- * ends an utterance after a pause of its own choosing, often a second or two, and may ignore the silence hints
- * in the request. So every ending inside the wait starts another utterance, and the words of all of them are
- * joined into one text by [DictationWindow], each said once.
+ * ends an utterance after a pause of its own choosing, often a second or two. So every ending inside the wait
+ * starts another utterance, and the words of all of them are joined into one text by [DictationWindow], each
+ * said once.
+ *
+ * With [segmented] the request asked the service to keep one utterance open through pauses and to return each
+ * phrase as it is finished ([segment]). Then the pause is measured here alone, and nothing has to be started
+ * again between phrases. A service that ignores the request ends its utterances as before, and is handled as
+ * before.
  *
  * The mic waits [waitMs] for the first words and [pauseMs] after the last ones. With a [pauseMs] of zero the
  * service's own end of speech ends the session, which is what a screen that sends without a tap wants. A sound
@@ -20,6 +25,7 @@ internal class DictationFlow(
     private val host: Host,
     private val pauseMs: Long = waitMs,
     private val maxMs: Long = MAX_SESSION_MS,
+    private val segmented: Boolean = false,
 ) {
     interface Host {
         fun now(): Long
@@ -69,8 +75,11 @@ internal class DictationFlow(
     /** The service has heard speech begin in [turn]: words, or a sound it may yet find no words in. */
     private var speaking = false
 
-    /** The service has stopped listening to [turn]. */
+    /** The service has reported the end of the speech it heard in [turn]. A plain utterance is over then. */
     private var ended = false
+
+    /** Speech began again in [turn] before the words of the speech before it came back as a finished phrase. */
+    private var resumed = false
     private var stopping = false
     private var closed = false
 
@@ -81,6 +90,7 @@ internal class DictationFlow(
         open = true
         speaking = false
         ended = false
+        resumed = false
         startedAt = host.now()
         if (id == 1) {
             limitAt = startedAt + maxMs
@@ -98,7 +108,9 @@ internal class DictationFlow(
         stopping = true
         host.clearTimer()
         if (open && speaking) {
-            if (!ended) host.stop()
+            // A plain utterance returns its words by itself after its end of speech. One that was asked to listen
+            // on is still listening then, and has to be told to finish.
+            if (!ended || segmented) host.stop()
         } else {
             deliver()
         }
@@ -128,7 +140,14 @@ internal class DictationFlow(
     }
 
     fun beginningOfSpeech(id: Int) {
-        if (!hears(id) || stopping || ended) return
+        if (!hears(id) || stopping) return
+        if (ended) {
+            // A plain utterance is over after its end of speech. One that was asked to listen on goes on.
+            if (!segmented) return
+            ended = false
+            resumed = true
+            window.resumed()
+        }
         speaking = true
         waitForTheLimitOnly()
         host.beginningOfSpeech()
@@ -146,6 +165,7 @@ internal class DictationFlow(
     fun endOfSpeech(id: Int) {
         if (!hears(id) || ended) return
         ended = true
+        resumed = false
         val now = host.now()
         window.endOfSpeech(now)
         if (stopping) return
@@ -161,6 +181,32 @@ internal class DictationFlow(
             },
             ::expire,
         )
+    }
+
+    /** A finished phrase of utterance [id], which stays open: the service was asked to listen on. */
+    fun segment(id: Int, words: String) {
+        if (!hears(id) || words.isBlank()) return
+        val now = host.now()
+        window.phrase(words, now)
+        // After speech began again these are the words before it, and the speech in flight goes on.
+        if (resumed) {
+            resumed = false
+        } else {
+            speaking = false
+            ended = false
+        }
+        host.partial(window.text)
+        when {
+            speaking -> Unit
+            // Done, or the session's limit, was waiting for these words.
+            stopping -> deliver()
+            else -> host.after(remaining(now), ::expire)
+        }
+    }
+
+    /** The service closed an utterance it had kept open: a final with nothing in it. */
+    fun endOfSegments(id: Int) {
+        if (hears(id)) complete(null)
     }
 
     fun results(id: Int, words: String?) {
@@ -232,6 +278,9 @@ internal class DictationFlow(
     /** The user has been quiet for the whole wait, or the session has reached its limit. */
     private fun expire() {
         if (stopping || closed) return
+        // The pause ran out after an end of speech. A service that was asked to listen on has had the whole pause
+        // to return those words, so nothing more is waited for. At the session's limit the words in flight are.
+        if (segmented && ended && host.now() < limitAt) speaking = false
         host.endOfSpeech()
         stop()
     }
